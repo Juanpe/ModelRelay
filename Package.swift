@@ -13,6 +13,11 @@ let package = Package(
         // Optional: MLX models from Hugging Face. Separate so the core stays
         // dependency-free.
         .library(name: "ModelRelayMLX", targets: ["ModelRelayMLX"]),
+        // Optional: sends request steps with URLSession.
+        .library(name: "ModelRelayHTTP", targets: ["ModelRelayHTTP"]),
+        // Optional: Claude and OpenAI-compatible servers (OpenAI, Ollama, LM
+        // Studio) as FoundationModels `LanguageModel`s.
+        .library(name: "ModelRelayCloud", targets: ["ModelRelayCloud"]),
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "3.32.3")),
@@ -36,6 +41,16 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ]
         ),
+        .target(
+            name: "ModelRelayHTTP",
+            dependencies: ["ModelRelay"],
+            swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
+        ),
+        .target(
+            name: "ModelRelayCloud",
+            dependencies: ["ModelRelay"],
+            swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
+        ),
         .executableTarget(name: "relay-bench", dependencies: ["ModelRelay", "ModelRelayMLX"]),
         // A local HTTP server that runs workflows from JSON files, so tools like
         // n8n can use Apple's models: `swift run relay-serve Examples/workflows`.
@@ -43,5 +58,6 @@ let package = Package(
         // A one-window Mac app to try workflows by hand: `swift run RelayPlayground`.
         .executableTarget(name: "RelayPlayground", dependencies: ["ModelRelay", "ModelRelayMLX"]),
         .testTarget(name: "ModelRelayTests", dependencies: ["ModelRelay"]),
+        .testTarget(name: "ModelRelayNetworkTests", dependencies: ["ModelRelay", "ModelRelayHTTP", "ModelRelayCloud"]),
     ]
 )

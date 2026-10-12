@@ -27,7 +27,8 @@ report.output["total"]   // .number(8.3)
 - **Workflow**: steps that run top to bottom. `ifEquals` and `parallel` are
   blocks that contain steps, so a workflow is a small tree, never a free graph.
 - **Step**: `prompt` (text), `extract` (typed fields, guided generation),
-  `classify` (one label), `template` (`{{step.field}}` substitution, no model).
+  `classify` (one label), `template` (`{{step.field}}` substitution, no model),
+  `request` (an HTTP API call; a JSON response becomes fields).
 - **Values**: typed (`text`, `number`, `bool`, `list`, `dictionary`), so results
   are easy to hand to Shortcuts or any caller.
 - **Models**: a `ModelCatalog` maps a `ModelID` to a `LanguageModel`. Apple's
@@ -35,6 +36,35 @@ report.output["total"]   // .number(8.3)
 - **Fallback**: a step can name a second model, tried once when the first fails
   or returns invalid output (for example a label outside the list).
 - **No code execution**: templates only substitute values. Model output is data.
+
+## APIs and cloud models
+
+A `request` step calls an HTTP API. Every part is a template, and values are
+escaped for where they land (percent-encoded in the URL, JSON-escaped in a JSON
+body), so a model's output can fill a field but never reshape the call.
+
+```swift
+Step("weather", .request(HTTPRequest(
+    url: "https://api.example.com/weather?q={{input}}",
+    headers: [.init("Authorization", "Bearer {{secret.WEATHER_KEY}}")])))
+```
+
+- The core has no network code: pass `URLSessionRequestPerformer()` from
+  `ModelRelayHTTP` (or your own `RequestPerformer`) to `WorkflowRunner`.
+- `{{secret.NAME}}` comes from a `SecretProvider` you supply (for example the
+  Keychain), works only in request steps, and is hidden in descriptions.
+- Calls that change something (POST, PUT, PATCH, DELETE) are denied unless the
+  runner's `WritePolicy` is `.allow` or `.ask { request in … }`. No request is
+  ever retried.
+
+`ModelRelayCloud` adds `ClaudeModel` and `OpenAICompatibleModel` (OpenAI,
+Ollama, LM Studio) as FoundationModels `LanguageModel`s with guided generation:
+
+```swift
+let catalog = ModelCatalog()
+    .registering("claude") { ClaudeModel(model: "claude-haiku-5-5", apiKey: key) }
+    .registering("ollama") { OpenAICompatibleModel(baseURL: URL(string: "http://localhost:11434/v1")!, model: "llama3.2") }
+```
 
 ## Trying it
 

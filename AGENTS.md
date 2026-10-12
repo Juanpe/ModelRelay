@@ -16,6 +16,10 @@ sibling repo) is its first client; nothing app-specific belongs here.
    integrations are separate products.
 6. Swift 6.4, strict concurrency, no warnings, `ExistentialAny`.
 7. Every behaviour has a test against `ScriptedModel` (the real session path).
+   Network code is tested against `StubProtocol`; tests never reach a real
+   server or use a real key.
+8. Secrets only reach request steps, never prompts, records or descriptions.
+   Writes (non-GET requests) need an explicit `WritePolicy` and are never retried.
 
 ## Commands
 

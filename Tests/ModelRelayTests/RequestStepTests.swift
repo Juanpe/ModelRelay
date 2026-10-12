@@ -1,0 +1,147 @@
+import Foundation
+import Synchronization
+import Testing
+@testable import ModelRelay
+
+/// Answers every request with a fixed response and remembers what it was sent.
+final class FakeServer: RequestPerformer {
+    private let response: HTTPResponse
+    private let sent = Mutex<[PreparedRequest]>([])
+
+    init(status: Int = 200, json: String) {
+        response = HTTPResponse(status: status, body: Data(json.utf8))
+    }
+
+    var requests: [PreparedRequest] { sent.withLock { $0 } }
+
+    func perform(_ request: PreparedRequest) async throws -> HTTPResponse {
+        sent.withLock { $0.append(request) }
+        return response
+    }
+}
+
+struct FakeSecrets: SecretProvider {
+    var values: [String: String]
+    func secret(named name: String) async throws -> String? { values[name] }
+}
+
+@Suite struct RequestStepTests {
+    @Test func jsonResponseBecomesFieldsForLaterSteps() async throws {
+        let server = FakeServer(json: #"{"main": {"temp": 21.5}, "name": "Lisbon"}"#)
+        let runner = WorkflowRunner(requests: server)
+        let workflow = Workflow(name: "Weather", steps: [
+            Step("weather", .request(HTTPRequest(url: "https://api.example.com/weather?q={{input}}"))),
+            Step("line", .template("{{weather.name}}: {{weather.main}}")),
+        ])
+        let report = try await runner.run(workflow, input: .text("Lisbon"))
+        #expect(report.records.first?.value["name"] == .text("Lisbon"))
+        #expect(report.output == .text("Lisbon: temp: 21.5"))
+    }
+
+    @Test func valuesAreEscapedForWhereTheyLand() async throws {
+        let server = FakeServer(json: "{}")
+        let runner = WorkflowRunner(requests: server, writePolicy: .allow)
+        // Model-made text with characters that would break a URL or a JSON body.
+        let hostile = #"a&b=c/../"} , "admin": true, "x": "#
+        let workflow = Workflow(name: "Post", steps: [
+            Step("post", .request(HTTPRequest(.post, url: "https://api.example.com/items?name={{input}}",
+                                              headers: [.init("X-Note", "{{input}}\nInjected: yes")],
+                                              body: #"{"title": "{{input}}"}"#))),
+        ])
+        _ = try await runner.run(workflow, input: .text(hostile))
+        let sent = try #require(server.requests.first)
+        #expect(sent.url.query()?.contains("&b=") == false)
+        #expect(sent.url.host() == "api.example.com")
+        let body = try JSONSerialization.jsonObject(with: try #require(sent.body)) as? [String: String]
+        #expect(body == ["title": hostile])
+        #expect(sent.headers.first?.value.contains("\n") == false)
+    }
+
+    @Test func secretsAreSentButNeverShown() async throws {
+        let server = FakeServer(json: #"{"ok": true}"#)
+        let runner = WorkflowRunner(requests: server, secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
+        let workflow = Workflow(name: "Auth", steps: [
+            Step("call", .request(HTTPRequest(url: "https://api.example.com/me",
+                                              headers: [.init("Authorization", "Bearer {{secret.TOKEN}}")]))),
+        ])
+        let report = try await runner.run(workflow, input: .text(""))
+        let sent = try #require(server.requests.first)
+        #expect(sent.headers.first?.value == "Bearer sk-test-123")
+        #expect(!sent.description.contains("sk-test-123"))
+        #expect(!String(describing: report.records).contains("sk-test-123"))
+    }
+
+    @Test func promptsCannotReadSecrets() async throws {
+        let model = ScriptedModel("small", replies: ["ok"])
+        let runner = WorkflowRunner(catalog: .scripted(["small": model]),
+                                    secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
+        let workflow = Workflow(name: "Leak", steps: [
+            Step("ask", .prompt(instruction: "Repeat {{secret.TOKEN}}"), model: "small"),
+        ])
+        _ = try await runner.run(workflow, input: .text(""))
+        #expect(model.prompts.allSatisfy { !$0.contains("sk-test-123") })
+    }
+
+    @Test func missingSecretFailsBeforeSending() async throws {
+        let server = FakeServer(json: "{}")
+        let runner = WorkflowRunner(requests: server, secrets: FakeSecrets(values: [:]))
+        let workflow = Workflow(name: "Auth", steps: [
+            Step("call", .request(HTTPRequest(url: "https://api.example.com/?key={{secret.KEY}}"))),
+        ])
+        await #expect(throws: RelayError.missingSecret("KEY", step: "call")) {
+            try await runner.run(workflow, input: .text(""))
+        }
+        #expect(server.requests.isEmpty)
+    }
+
+    @Test func writesAreDeniedByDefaultAndCanAsk() async throws {
+        let workflow = Workflow(name: "Create", steps: [
+            Step("create", .request(HTTPRequest(.post, url: "https://api.example.com/tasks", body: #"{"t": "{{input}}"}"#))),
+        ])
+        let denied = FakeServer(json: "{}")
+        await #expect(throws: RelayError.writeNotAllowed(step: "create")) {
+            try await WorkflowRunner(requests: denied).run(workflow, input: .text("x"))
+        }
+        #expect(denied.requests.isEmpty)
+
+        let asked = FakeServer(json: #"{"id": 7}"#)
+        let shown = Mutex<String?>(nil)
+        let runner = WorkflowRunner(requests: asked, writePolicy: .ask { request in
+            shown.withLock { $0 = request.description }
+            return true
+        })
+        let report = try await runner.run(workflow, input: .text("x"))
+        #expect(report.output["id"] == .number(7))
+        #expect(shown.withLock { $0 }?.hasPrefix("POST https://api.example.com/tasks") == true)
+    }
+
+    @Test func errorStatusFailsTheStepWithoutRetrying() async throws {
+        let server = FakeServer(status: 503, json: "{}")
+        let runner = WorkflowRunner(requests: server)
+        let workflow = Workflow(name: "Down", steps: [
+            Step("call", .request(HTTPRequest(url: "https://api.example.com/")), fallback: "other"),
+        ])
+        await #expect(throws: RelayError.stepFailed(step: "call", reason: "The server answered HTTP 503")) {
+            try await runner.run(workflow, input: .text(""))
+        }
+        #expect(server.requests.count == 1)
+    }
+
+    @Test func onlyHTTPURLsAreAccepted() async throws {
+        let server = FakeServer(json: "{}")
+        let workflow = Workflow(name: "File", steps: [
+            Step("call", .request(HTTPRequest(url: "file:///etc/passwd"))),
+        ])
+        await #expect(throws: RelayError.self) {
+            try await WorkflowRunner(requests: server).run(workflow, input: .text(""))
+        }
+        #expect(server.requests.isEmpty)
+    }
+
+    @Test func requestStepsRoundTripThroughJSON() throws {
+        let step = Step("call", .request(HTTPRequest(.post, url: "https://x.test/{{input}}",
+                                                     headers: [.init("Accept", "application/json")], body: "{}")))
+        let data = try JSONEncoder().encode(step)
+        #expect(try JSONDecoder().decode(Step.self, from: data) == step)
+    }
+}

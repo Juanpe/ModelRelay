@@ -85,7 +85,7 @@ extension JSONEncoder {
             step.kind = .parallel(overriding(children, model: model))
         case .prompt, .extract, .classify:
             step.model = model
-        case .template:
+        case .template, .request:
             break
         }
         return step

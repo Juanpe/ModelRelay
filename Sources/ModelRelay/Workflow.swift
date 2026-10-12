@@ -56,6 +56,9 @@ public struct Step: Codable, Sendable, Hashable {
         /// Runs `then` when the referenced value equals `value`, else `otherwise`.
         /// The block's result is the result of the branch that ran.
         case ifEquals(reference: String, value: String, then: [Step], otherwise: [Step])
+        /// Calls an HTTP API. A JSON response becomes fields (`{{step.field}}`),
+        /// anything else text. No model; never retried.
+        case request(HTTPRequest)
         /// Runs the steps concurrently on the same input. The block's result is a
         /// dictionary keyed by step name: this is the "merge".
         case parallel([Step])

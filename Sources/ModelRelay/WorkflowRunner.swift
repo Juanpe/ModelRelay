@@ -11,6 +11,12 @@ public enum RelayError: Error, Equatable, Sendable {
     case missingModel(step: String)
     case unknownReference(String, step: String)
     case stepFailed(step: String, reason: String)
+    /// A request step ran but the runner has no `RequestPerformer`.
+    case requestsUnavailable(step: String)
+    /// A request step needs `{{secret.NAME}}` and no secret has that name.
+    case missingSecret(String, step: String)
+    /// A request that changes something was not allowed by the `WritePolicy`.
+    case writeNotAllowed(step: String)
 }
 
 /// What one step did: its result, which model produced it and how long it took.
@@ -35,13 +41,23 @@ public struct RunReport: Sendable {
 public actor WorkflowRunner {
     private let catalog: ModelCatalog
     private let stepTimeout: Duration
+    private let requests: (any RequestPerformer)?
+    private let secrets: (any SecretProvider)?
+    private let writePolicy: WritePolicy
     private let clock = ContinuousClock()
 
-    /// `stepTimeout` bounds one model call. Small models occasionally run away;
-    /// a call that takes longer counts as a failure (and tries the fallback).
-    public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30)) {
+    /// `stepTimeout` bounds one model call or request. Small models occasionally
+    /// run away; a call that takes longer counts as a failure (and tries the
+    /// fallback model, if any). Request steps need `requests`; those that change
+    /// something also need a `writePolicy` that allows them.
+    public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30),
+                requests: (any RequestPerformer)? = nil, secrets: (any SecretProvider)? = nil,
+                writePolicy: WritePolicy = .deny) {
         self.catalog = catalog
         self.stepTimeout = stepTimeout
+        self.requests = requests
+        self.secrets = secrets
+        self.writePolicy = writePolicy
     }
 
     public func run(_ workflow: Workflow, input: Value) async throws -> RunReport {
@@ -97,6 +113,12 @@ public actor WorkflowRunner {
         switch step.kind {
         case .template(let template):
             let value = Value.text(Template.render(template, scope.resolve))
+            scope.records.append(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
+                                            duration: clock.now - start, skipped: false))
+            return value
+
+        case .request(let request):
+            let value = try await perform(request, step: step.name, resolve: scope.resolve)
             scope.records.append(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
                                             duration: clock.now - start, skipped: false))
             return value
@@ -161,6 +183,53 @@ public actor WorkflowRunner {
         }
     }
 
+    private func perform(_ request: HTTPRequest, step: String, resolve: (String) -> Value?) async throws -> Value {
+        guard let requests else { throw RelayError.requestsUnavailable(step: step) }
+        var values: [String: String] = [:]
+        for name in RequestBuilder.secretNames(in: request) {
+            guard let value = try await secrets?.secret(named: name) else {
+                throw RelayError.missingSecret(name, step: step)
+            }
+            values[name] = value
+        }
+        let prepared: PreparedRequest
+        do {
+            prepared = try RequestBuilder.prepare(request, secrets: values, resolve: resolve)
+        } catch {
+            throw RelayError.stepFailed(step: step, reason: String(describing: error))
+        }
+        if request.method.isWrite {
+            let allowed = switch writePolicy {
+            case .allow: true
+            case .deny: false
+            case .ask(let confirm): await confirm(prepared)
+            }
+            guard allowed else { throw RelayError.writeNotAllowed(step: step) }
+        }
+        // One attempt only: a write that timed out may still have happened.
+        do {
+            let response = try await withTimeout { try await requests.perform(prepared) }
+            return try RequestBuilder.value(from: response)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw RelayError.stepFailed(step: step, reason: String(describing: error))
+        }
+    }
+
+    private func withTimeout<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
+        let limit = stepTimeout
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await work() }
+            group.addTask {
+                try await Task.sleep(for: limit)
+                throw InvalidOutput(reason: "No answer within \(limit)")
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
     private static func flatten(_ step: Step) -> [Step] {
         switch step.kind {
         case .ifEquals(_, _, let then, let otherwise): [step] + (then + otherwise).flatMap(flatten)
@@ -181,16 +250,7 @@ public actor WorkflowRunner {
 
     private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID) async throws -> Value {
         let model = try await catalog.model(id)
-        let limit = stepTimeout
-        return try await withThrowingTaskGroup(of: Value.self) { group in
-            group.addTask { try await Self.respond(kind, prompt: prompt, model: model) }
-            group.addTask {
-                try await Task.sleep(for: limit)
-                throw InvalidOutput(reason: "No answer within \(limit)")
-            }
-            defer { group.cancelAll() }
-            return try await group.next()!
-        }
+        return try await withTimeout { try await Self.respond(kind, prompt: prompt, model: model) }
     }
 
     private static func respond(_ kind: Step.Kind, prompt: String, model: any LanguageModel) async throws -> Value {
