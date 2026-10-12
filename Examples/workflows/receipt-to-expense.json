@@ -1,0 +1,22 @@
+{
+  "id" : "6B1C2E1A-0C0B-4E2B-9E1F-2B7C1D9A0F11",
+  "name" : "Receipt to expense",
+  "schemaVersion" : 1,
+  "steps" : [
+    {
+      "kind" : {
+        "extract" : {
+          "fields" : [
+            { "kind" : { "text" : {} }, "name" : "merchant" },
+            { "kind" : { "number" : {} }, "name" : "total", "description" : "The final amount paid" },
+            { "kind" : { "choice" : { "_0" : [ "EUR", "USD", "GBP" ] } }, "name" : "currency" },
+            { "kind" : { "text" : {} }, "name" : "date", "description" : "ISO 8601 date" }
+          ],
+          "instruction" : "Extract the expense from this receipt."
+        }
+      },
+      "model" : "apple.on-device",
+      "name" : "expense"
+    }
+  ]
+}

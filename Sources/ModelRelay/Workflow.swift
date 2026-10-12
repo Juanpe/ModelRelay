@@ -70,6 +70,16 @@ public struct ModelID: Codable, Sendable, Hashable, ExpressibleByStringLiteral, 
     public init(stringLiteral value: String) { self.rawValue = value }
     public var description: String { rawValue }
 
+    /// Encoded as a plain string: `"model": "apple.on-device"`.
+    public init(from decoder: any Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public static let appleOnDevice: ModelID = "apple.on-device"
     public static let applePrivateCloud: ModelID = "apple.private-cloud"
 }

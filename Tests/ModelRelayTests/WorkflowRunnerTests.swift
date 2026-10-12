@@ -109,5 +109,6 @@ import Testing
         ])
         let data = try JSONEncoder().encode(workflow)
         #expect(try JSONDecoder().decode(Workflow.self, from: data) == workflow)
+        #expect(String(decoding: data, as: UTF8.self).contains(#""model":"apple.on-device""#))
     }
 }

@@ -37,6 +37,9 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "relay-bench", dependencies: ["ModelRelay", "ModelRelayMLX"]),
+        // A local HTTP server that runs workflows from JSON files, so tools like
+        // n8n can use Apple's models: `swift run relay-serve Examples/workflows`.
+        .executableTarget(name: "relay-serve", dependencies: ["ModelRelay", "ModelRelayMLX"]),
         // A one-window Mac app to try workflows by hand: `swift run RelayPlayground`.
         .executableTarget(name: "RelayPlayground", dependencies: ["ModelRelay", "ModelRelayMLX"]),
         .testTarget(name: "ModelRelayTests", dependencies: ["ModelRelay"]),

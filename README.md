@@ -45,6 +45,17 @@ type an input, run it and see each step's result, model and time.
 swift run RelayPlayground
 ```
 
+## Serving workflows over HTTP
+
+`relay-serve` loads `Workflow` JSON files from a folder and runs them on
+`127.0.0.1`, so other tools (n8n, scripts, Shortcuts' "Get contents of URL") can
+use Apple's models:
+
+```sh
+swift run relay-serve Examples/workflows --port 8787
+curl -s localhost:8787/run/receipt-to-expense -d '{"input": "BLUE BOTTLE … TOTAL EUR 8.30"}'
+```
+
 ## Measuring a model
 
 `relay-bench` runs a few receipts and messages through a model and reports
