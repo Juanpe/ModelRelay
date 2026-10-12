@@ -34,10 +34,14 @@ public struct RunReport: Sendable {
 /// choose what the runner does next except through an explicit `ifEquals`.
 public actor WorkflowRunner {
     private let catalog: ModelCatalog
+    private let stepTimeout: Duration
     private let clock = ContinuousClock()
 
-    public init(catalog: ModelCatalog = ModelCatalog()) {
+    /// `stepTimeout` bounds one model call. Small models occasionally run away;
+    /// a call that takes longer counts as a failure (and tries the fallback).
+    public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30)) {
         self.catalog = catalog
+        self.stepTimeout = stepTimeout
     }
 
     public func run(_ workflow: Workflow, input: Value) async throws -> RunReport {
@@ -177,6 +181,19 @@ public actor WorkflowRunner {
 
     private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID) async throws -> Value {
         let model = try await catalog.model(id)
+        let limit = stepTimeout
+        return try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await Self.respond(kind, prompt: prompt, model: model) }
+            group.addTask {
+                try await Task.sleep(for: limit)
+                throw InvalidOutput(reason: "No answer within \(limit)")
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
+    private static func respond(_ kind: Step.Kind, prompt: String, model: any LanguageModel) async throws -> Value {
         let session = LanguageModelSession(model: model)
         switch kind {
         case .extract(_, let fields):

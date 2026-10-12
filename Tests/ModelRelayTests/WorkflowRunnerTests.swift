@@ -79,6 +79,22 @@ import Testing
         #expect(report.records.first?.usedFallback == true)
     }
 
+    /// Found benchmarking Qwen3 1.7B: one extraction ran for 150 s and blocked
+    /// the workflow. A slow call now times out and goes to the fallback.
+    @Test func aSlowModelTimesOutIntoTheFallback() async throws {
+        let small = ScriptedModel("small", replies: ["<hang>"])
+        let bigger = ScriptedModel("bigger", replies: ["Done."])
+        let runner = WorkflowRunner(catalog: .scripted(["small": small, "bigger": bigger]), stepTimeout: .milliseconds(100))
+        let workflow = Workflow(name: "Slow", steps: [
+            Step("answer", .prompt(instruction: "Answer."), model: "small", fallback: "bigger"),
+        ])
+        let started = ContinuousClock.now
+        let report = try await runner.run(workflow, input: .text("Q"))
+        #expect(report.output == .text("Done."))
+        #expect(report.records.first?.usedFallback == true)
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
+
     @Test func templatesSubstituteWithoutEvaluating() {
         let values: [String: Value] = ["total": .number(8), "x": .dictionary(["y": .text("ok")])]
         let rendered = Template.render("{{total}} / {{x.y}} / {{ missing }} / {{1+1}}") { values[$0] ?? values["x"]?[$0.replacingOccurrences(of: "x.", with: "")] }

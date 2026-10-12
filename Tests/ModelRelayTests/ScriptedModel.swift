@@ -14,6 +14,7 @@ final class ScriptedModel: LanguageModel {
         nonisolated(nonsending) func respond(to request: LanguageModelExecutorGenerationRequest, model: ScriptedModel,
                                              streamingInto channel: LanguageModelExecutorGenerationChannel) async throws {
             guard let reply = model.next() else { throw Failure() }
+            if reply == "<hang>" { try await Task.sleep(for: .seconds(60)) }
             await channel.send(.response(action: .appendText(reply, tokenCount: 1)))
         }
     }

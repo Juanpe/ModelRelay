@@ -1,9 +1,10 @@
 import Foundation
 import FoundationModels
 import ModelRelay
+import ModelRelayMLX
 
 // relay-bench: how well does a model do the small jobs ModelRelay is for?
-// Usage: swift run relay-bench [model-id]   (default: apple.on-device)
+// Usage: relay-bench [model-id]   (default: apple.on-device; MLX: mlx:qwen3-1.7b, mlx:gemma3-1b, …)
 
 struct Receipt { let text: String; let merchant: String; let total: Double; let currency: String }
 struct Message { let text: String; let label: String }
@@ -28,7 +29,7 @@ if modelID == .appleOnDevice, case .unavailable(let reason) = SystemLanguageMode
     print("Apple on-device model unavailable: \(reason)")
     exit(1)
 }
-let runner = WorkflowRunner()
+let runner = WorkflowRunner(catalog: ModelCatalog().registeringMLXModels())
 
 let extract = Workflow(name: "Receipt to expense", steps: [
     Step("expense", .extract(instruction: "Extract the expense from this receipt. total is the final amount paid.", fields: [
@@ -38,6 +39,12 @@ let extract = Workflow(name: "Receipt to expense", steps: [
 let triage = Workflow(name: "Triage", steps: [
     Step("label", .classify(instruction: "Does this need attention today?", labels: ["urgent", "later"]), model: modelID),
 ])
+
+// Warm up: the first call loads the model (and may download MLX weights);
+// that time isn't answer latency, so it's excluded from the results.
+print("Loading \(modelID)…")
+_ = try? await WorkflowRunner(catalog: ModelCatalog().registeringMLXModels(), stepTimeout: .seconds(600))
+    .run(triage, input: .text("Warm-up"))
 
 func ms(_ d: Duration) -> Int { Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000) }
 

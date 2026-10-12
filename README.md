@@ -5,7 +5,7 @@ parallel — and let every step use the smallest model that does the job.
 
 ModelRelay is built on Apple's FoundationModels (iOS, macOS and visionOS 27).
 Any FoundationModels `LanguageModel` can run a step: Apple's on-device model,
-Private Cloud Compute, MLX models through `MLXFoundationModels`, or your own.
+Private Cloud Compute, MLX models (`ModelRelayMLX`, through `MLXFoundationModels`), or your own.
 
 ```swift
 import ModelRelay
@@ -36,6 +36,15 @@ report.output["total"]   // .number(8.3)
   or returns invalid output (for example a label outside the list).
 - **No code execution**: templates only substitute values. Model output is data.
 
+## Trying it
+
+`RelayPlayground` is a one-window Mac app: pick a sample workflow and a model,
+type an input, run it and see each step's result, model and time.
+
+```sh
+swift run RelayPlayground
+```
+
 ## Measuring a model
 
 `relay-bench` runs a few receipts and messages through a model and reports
@@ -47,7 +56,7 @@ swift run relay-bench apple.on-device
 
 ## Requirements
 
-Xcode 27 (Swift 6.4), iOS / macOS / visionOS 27.
+Xcode 27 (Swift 6.4), iOS / macOS / visionOS 27. `ModelRelayMLX` also needs Xcode's Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain`).
 
 ## License
 
