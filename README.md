@@ -28,7 +28,8 @@ report.output["total"]   // .number(8.3)
   blocks that contain steps, so a workflow is a small tree, never a free graph.
 - **Step**: `prompt` (text), `extract` (typed fields, guided generation),
   `classify` (one label), `template` (`{{step.field}}` substitution, no model),
-  `request` (an HTTP API call; a JSON response becomes fields).
+  `request` (an HTTP API call; a JSON response becomes fields), `agent` (a
+  model that may call your requests as tools before answering).
 - **Values**: typed (`text`, `number`, `bool`, `list`, `dictionary`), so results
   are easy to hand to Shortcuts or any caller.
 - **Models**: a `ModelCatalog` maps a `ModelID` to a `LanguageModel`. Apple's
@@ -56,6 +57,20 @@ Step("weather", .request(HTTPRequest(
 - Calls that change something (POST, PUT, PATCH, DELETE) are denied unless the
   runner's `WritePolicy` is `.allow` or `.ask { request in … }`. No request is
   ever retried.
+
+An `agent` step gives a model your requests as tools. The model fills each
+tool's typed parameters, used in the request as `{{args.NAME}}`:
+
+```swift
+let weather = AgentTool(name: "getWeather", description: "Gets the current weather for a city.",
+                        parameters: [Field("city", .text)],
+                        request: HTTPRequest(url: "https://api.example.com/weather?q={{args.city}}"))
+Step("answer", .agent(instruction: "Answer the question.", tools: [weather]), model: .appleOnDevice)
+```
+
+Tools follow the same rules as request steps (escaping, secrets, `WritePolicy`).
+One agent step makes at most six calls, and once a tool has run, a failure is
+not retried on the fallback model, so nothing is done twice.
 
 `ModelRelayCloud` adds `ClaudeModel` and `OpenAICompatibleModel` (OpenAI,
 Ollama, LM Studio) as FoundationModels `LanguageModel`s with guided generation:

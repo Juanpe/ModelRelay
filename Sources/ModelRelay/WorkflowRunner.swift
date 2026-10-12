@@ -27,6 +27,8 @@ public struct StepRecord: Sendable, Hashable {
     public var usedFallback: Bool
     public var duration: Duration
     public var skipped: Bool
+    /// Tools an agent step called, in order (empty for other steps).
+    public var toolCalls: [String] = []
 }
 
 public struct RunReport: Sendable {
@@ -41,9 +43,7 @@ public struct RunReport: Sendable {
 public actor WorkflowRunner {
     private let catalog: ModelCatalog
     private let stepTimeout: Duration
-    private let requests: (any RequestPerformer)?
-    private let secrets: (any SecretProvider)?
-    private let writePolicy: WritePolicy
+    private let context: RequestContext
     private let clock = ContinuousClock()
 
     /// `stepTimeout` bounds one model call or request. Small models occasionally
@@ -55,9 +55,7 @@ public actor WorkflowRunner {
                 writePolicy: WritePolicy = .deny) {
         self.catalog = catalog
         self.stepTimeout = stepTimeout
-        self.requests = requests
-        self.secrets = secrets
-        self.writePolicy = writePolicy
+        self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
     public func run(_ workflow: Workflow, input: Value) async throws -> RunReport {
@@ -118,7 +116,7 @@ public actor WorkflowRunner {
             return value
 
         case .request(let request):
-            let value = try await perform(request, step: step.name, resolve: scope.resolve)
+            let value = try await context.perform(request, step: step.name, resolve: scope.resolve)
             scope.records.append(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
                                             duration: clock.now - start, skipped: false))
             return value
@@ -156,6 +154,39 @@ public actor WorkflowRunner {
             }
             return .dictionary(merged)
 
+        case .agent(_, let specs):
+            guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
+            let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
+            let snapshot = scope
+            let log = ToolCallLog(limit: AgentTool.maxCallsPerStep)
+            let tools: [any Tool] = specs.map {
+                RequestTool(spec: $0, step: step.name, context: context, log: log, resolve: { snapshot.resolve($0) })
+            }
+            var model = primary
+            var usedFallback = false
+            let value: Value
+            do {
+                value = try await generate(.prompt(instruction: ""), prompt: prompt, model: primary, tools: tools)
+            } catch let error as RelayError where error == .unknownModel(primary) {
+                throw error
+            } catch {
+                // A tool may already have changed something: only retry on the
+                // fallback model when no tool was called.
+                guard let fallback = step.fallback, log.calls.isEmpty else {
+                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                }
+                do {
+                    value = try await generate(.prompt(instruction: ""), prompt: prompt, model: fallback, tools: tools)
+                    model = fallback
+                    usedFallback = true
+                } catch {
+                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                }
+            }
+            scope.records.append(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
+                                            duration: clock.now - start, skipped: false, toolCalls: log.calls))
+            return value
+
         case .prompt, .extract, .classify:
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
@@ -183,53 +214,6 @@ public actor WorkflowRunner {
         }
     }
 
-    private func perform(_ request: HTTPRequest, step: String, resolve: (String) -> Value?) async throws -> Value {
-        guard let requests else { throw RelayError.requestsUnavailable(step: step) }
-        var values: [String: String] = [:]
-        for name in RequestBuilder.secretNames(in: request) {
-            guard let value = try await secrets?.secret(named: name) else {
-                throw RelayError.missingSecret(name, step: step)
-            }
-            values[name] = value
-        }
-        let prepared: PreparedRequest
-        do {
-            prepared = try RequestBuilder.prepare(request, secrets: values, resolve: resolve)
-        } catch {
-            throw RelayError.stepFailed(step: step, reason: String(describing: error))
-        }
-        if request.method.isWrite {
-            let allowed = switch writePolicy {
-            case .allow: true
-            case .deny: false
-            case .ask(let confirm): await confirm(prepared)
-            }
-            guard allowed else { throw RelayError.writeNotAllowed(step: step) }
-        }
-        // One attempt only: a write that timed out may still have happened.
-        do {
-            let response = try await withTimeout { try await requests.perform(prepared) }
-            return try RequestBuilder.value(from: response)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw RelayError.stepFailed(step: step, reason: String(describing: error))
-        }
-    }
-
-    private func withTimeout<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
-        let limit = stepTimeout
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await work() }
-            group.addTask {
-                try await Task.sleep(for: limit)
-                throw InvalidOutput(reason: "No answer within \(limit)")
-            }
-            defer { group.cancelAll() }
-            return try await group.next()!
-        }
-    }
-
     private static func flatten(_ step: Step) -> [Step] {
         switch step.kind {
         case .ifEquals(_, _, let then, let otherwise): [step] + (then + otherwise).flatMap(flatten)
@@ -240,7 +224,8 @@ public actor WorkflowRunner {
 
     private static func prompt(for kind: Step.Kind, source: Value, resolve: (String) -> Value?) -> String {
         let instruction: String = switch kind {
-        case .prompt(let instruction), .extract(let instruction, _), .classify(let instruction, _): instruction
+        case .prompt(let instruction), .extract(let instruction, _), .classify(let instruction, _),
+             .agent(let instruction, _): instruction
         default: ""
         }
         let rendered = Template.render(instruction, resolve)
@@ -248,13 +233,15 @@ public actor WorkflowRunner {
         return instruction.contains("{{") ? rendered : "\(rendered)\n\nInput:\n\(source.textValue)"
     }
 
-    private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID) async throws -> Value {
+    private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID,
+                          tools: [any Tool] = []) async throws -> Value {
         let model = try await catalog.model(id)
-        return try await withTimeout { try await Self.respond(kind, prompt: prompt, model: model) }
+        return try await withTimeout(stepTimeout) { try await Self.respond(kind, prompt: prompt, model: model, tools: tools) }
     }
 
-    private static func respond(_ kind: Step.Kind, prompt: String, model: any LanguageModel) async throws -> Value {
-        let session = LanguageModelSession(model: model)
+    private static func respond(_ kind: Step.Kind, prompt: String, model: any LanguageModel,
+                                tools: [any Tool]) async throws -> Value {
+        let session = LanguageModelSession(model: model, tools: tools)
         switch kind {
         case .extract(_, let fields):
             let schema = try SchemaBuilder.object(named: "Result", fields: fields)

@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import Synchronization
 @testable import ModelRelay
@@ -16,6 +17,14 @@ final class ScriptedModel: LanguageModel {
             model.record(request.transcript)
             guard let reply = model.next() else { throw Failure() }
             if reply == "<hang>" { try await Task.sleep(for: .seconds(60)) }
+            // "<tool:NAME>{json}" asks the session to call a tool with those arguments.
+            if reply.hasPrefix("<tool:"), let close = reply.firstIndex(of: ">") {
+                let name = String(reply[reply.index(reply.startIndex, offsetBy: 6)..<close])
+                let arguments = String(reply[reply.index(after: close)...])
+                await channel.send(.toolCalls(action: .toolCall(id: UUID().uuidString, name: name,
+                                                                action: .appendArguments(arguments, tokenCount: 1))))
+                return
+            }
             await channel.send(.response(action: .appendText(reply, tokenCount: 1)))
         }
     }
@@ -31,18 +40,24 @@ final class ScriptedModel: LanguageModel {
         self.replies = Mutex(replies)
     }
 
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration]) }
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration, .toolCalling]) }
     var executorConfiguration: String { name }
     var callCount: Int { calls.withLock { $0 } }
     /// The prompt text of every call, to check what a model was shown.
     var prompts: [String] { seen.withLock { $0 } }
 
     func record(_ transcript: Transcript) {
-        let text = transcript.compactMap { entry -> String? in
-            guard case .prompt(let prompt) = entry else { return nil }
-            return prompt.segments.compactMap { segment in
+        func text(_ segments: [Transcript.Segment]) -> String {
+            segments.compactMap { segment in
                 if case .text(let text) = segment { text.content } else { nil }
             }.joined()
+        }
+        let text = transcript.compactMap { entry -> String? in
+            switch entry {
+            case .prompt(let prompt): text(prompt.segments)
+            case .toolOutput(let output): "[\(output.toolName)] " + text(output.segments)
+            default: nil
+            }
         }.joined(separator: "\n")
         seen.withLock { $0.append(text) }
     }

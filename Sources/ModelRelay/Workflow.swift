@@ -56,6 +56,9 @@ public struct Step: Codable, Sendable, Hashable {
         /// Runs `then` when the referenced value equals `value`, else `otherwise`.
         /// The block's result is the result of the branch that ran.
         case ifEquals(reference: String, value: String, then: [Step], otherwise: [Step])
+        /// A model that may call the given tools (HTTP requests) before
+        /// answering in text. At most `AgentTool.maxCallsPerStep` calls.
+        case agent(instruction: String, tools: [AgentTool])
         /// Calls an HTTP API. A JSON response becomes fields (`{{step.field}}`),
         /// anything else text. No model; never retried.
         case request(HTTPRequest)

@@ -23,6 +23,9 @@ sibling repo) is its first client; nothing app-specific belongs here.
 
 ## Commands
 
+`LiveAppleTests` run Apple's on-device model for real (APIs stay fake); they
+only run with `RELAY_LIVE=1`.
+
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-27.0.0.app/Contents/Developer swift test
 DEVELOPER_DIR=/Applications/Xcode-27.0.0.app/Contents/Developer swift run relay-bench apple.on-device
