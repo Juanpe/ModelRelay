@@ -141,4 +141,32 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             #expect(!reason.contains("sk-ant-test"))
         }
     }
+
+    @Test func decisionsAPIAsksTypedQuestionsAndReadsProbabilities() async throws {
+        StubProtocol.reply = (200, #"{"answers": [{"type": "predicate", "name": "damaged", "probability": 0.95}, {"type": "choice", "name": "queue", "choice": "shipping", "confidence": 0.81}, {"type": "score", "name": "urgency", "score": 1.3, "confidence": 0.62}]}"#)
+        let model = DecisionsAPIModel(apiKey: "gw-test", zeroDataRetention: true)
+        let answers = try await model.decide([
+            Question("damaged", "Damaged?", .yesNo),
+            Question("queue", "Which team?", .choice([.init("billing", description: "Refunds"), .init("shipping")])),
+            Question("urgency", "How urgent?", .score(["low", "medium", "high"])),
+        ], about: "Broken screen.")
+        #expect(answers.map(\.result) == [.yesNo(true), .choice("shipping"), .score(1.3, level: "medium")])
+        #expect(answers.first?.confidence == 0.95)
+
+        let sent = try #require(StubProtocol.sent.first)
+        #expect(sent.url.absoluteString == "https://ai-gateway.vercel.sh/v1/decisions")
+        #expect(sent.headers["Authorization"] == "Bearer gw-test")
+        #expect(sent.json["model"] as? String == "typesafe-ai/jev")
+        let questions = try #require(sent.json["questions"] as? [[String: Any]])
+        #expect(questions.map { $0["type"] as? String } == ["predicate", "choice", "score"])
+        #expect(((sent.json["providerOptions"] as? [String: Any])?["gateway"] as? [String: Any])?["zeroDataRetention"] as? Bool == true)
+        #expect(!String(describing: model).contains("gw-test"))
+    }
+
+    @Test func aRefusedQuestionFails() async throws {
+        StubProtocol.reply = (200, #"{"answers": [{"type": "refusal", "name": "damaged"}]}"#)
+        await #expect(throws: CloudModelError.self) {
+            try await DecisionsAPIModel(apiKey: "k").decide([Question("damaged", "Damaged?", .yesNo)], about: "x")
+        }
+    }
 }

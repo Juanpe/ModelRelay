@@ -87,7 +87,7 @@ extension JSONEncoder {
                                   otherwise: overriding(otherwise, model: model))
         case .parallel(let children):
             step.kind = .parallel(overriding(children, model: model))
-        case .prompt, .extract, .classify, .agent:
+        case .prompt, .extract, .classify, .agent, .decide:
             step.model = model
         case .template, .request:
             break

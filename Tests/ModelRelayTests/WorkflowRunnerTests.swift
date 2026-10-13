@@ -141,3 +141,52 @@ import Testing
         #expect(try JSONDecoder().decode(Step.self, from: JSONEncoder().encode(step)) == step)
     }
 }
+
+@Suite struct DecideStepTests {
+    private let questions = [
+        Question("damaged", "Does the customer report a damaged item?", .yesNo),
+        Question("queue", "Which team should handle it?", .choice([.init("billing"), .init("shipping")])),
+        Question("urgency", "How urgent is it?", .score(["low", "medium", "high"])),
+    ]
+
+    @Test func languageModelsAnswerWithAGuidedSchema() async throws {
+        let model = ScriptedModel("small", replies: [#"{"damaged": true, "queue": "shipping", "urgency": "high"}"#])
+        let runner = WorkflowRunner(catalog: .scripted(["small": model]))
+        let workflow = Workflow(name: "Ticket", steps: [Step("ticket", .decide(questions: questions), model: "small")])
+        let report = try await runner.run(workflow, input: .text("The screen arrived broken."))
+        #expect(report.output["damaged"] == .bool(true))
+        #expect(report.output["queue"] == .text("shipping"))
+        #expect(report.output["urgency"] == .text("high"))
+        #expect(report.output["confidence"] == nil)
+    }
+
+    @Test func decisionModelsAddConfidence() async throws {
+        struct Fixed: DecisionModel {
+            func decide(_ questions: [Question], about input: String) async throws -> [Answer] {
+                [Answer(name: "damaged", result: .yesNo(true), confidence: 0.95),
+                 Answer(name: "queue", result: .choice("shipping"), confidence: 0.81),
+                 Answer(name: "urgency", result: .score(1.3, level: "medium"), confidence: 0.62)]
+            }
+        }
+        let runner = WorkflowRunner(catalog: ModelCatalog().registering(decisions: "jev") { Fixed() })
+        let workflow = Workflow(name: "Ticket", steps: [Step("ticket", .decide(questions: questions), model: "jev")])
+        let report = try await runner.run(workflow, input: .text("Broken screen."))
+        #expect(report.output["urgency"] == .text("medium"))
+        #expect(report.output["scores"]?["urgency"] == .number(1.3))
+        #expect(report.output["confidence"]?["damaged"] == .number(0.95))
+    }
+
+    @Test func aFailingDecisionModelFallsBackToALanguageModel() async throws {
+        struct Down: DecisionModel {
+            func decide(_ questions: [Question], about input: String) async throws -> [Answer] { throw URLError(.notConnectedToInternet) }
+        }
+        let local = ScriptedModel("local", replies: [#"{"damaged": false, "queue": "billing", "urgency": "low"}"#])
+        let catalog = ModelCatalog.scripted(["local": local]).registering(decisions: "jev") { Down() }
+        let workflow = Workflow(name: "Ticket", steps: [
+            Step("ticket", .decide(questions: questions), model: "jev", fallback: "local"),
+        ])
+        let report = try await WorkflowRunner(catalog: catalog).run(workflow, input: .text("Charged twice."))
+        #expect(report.output["queue"] == .text("billing"))
+        #expect(report.records.first?.usedFallback == true)
+    }
+}

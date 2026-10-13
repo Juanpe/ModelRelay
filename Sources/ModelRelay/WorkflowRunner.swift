@@ -210,6 +210,30 @@ public actor WorkflowRunner {
                                             duration: clock.now - start, skipped: false, toolCalls: log.calls))
             return value
 
+        case .decide(let questions):
+            guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
+            let text = source.textValue
+            do {
+                let value = try await decide(questions, about: text, model: primary)
+                scope.records.append(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
+                                                duration: clock.now - start, skipped: false))
+                return value
+            } catch let error as RelayError where error == .unknownModel(primary) {
+                throw error
+            } catch {
+                guard let fallback = step.fallback else {
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
+                }
+                do {
+                    let value = try await decide(questions, about: text, model: fallback)
+                    scope.records.append(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
+                                                    duration: clock.now - start, skipped: false))
+                    return value
+                } catch {
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
+                }
+            }
+
         case .prompt, .extract, .classify:
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
@@ -255,6 +279,16 @@ public actor WorkflowRunner {
         let rendered = Template.render(instruction, resolve)
         // The source text is data, clearly separated from the instruction.
         return instruction.contains("{{") ? rendered : "\(rendered)\n\nInput:\n\(source.textValue)"
+    }
+
+    private func decide(_ questions: [Question], about text: String, model id: ModelID) async throws -> Value {
+        if let decisions = try await catalog.decisionModel(id) {
+            return Answer.value(try await withTimeout(stepTimeout) { try await decisions.decide(questions, about: text) })
+        }
+        let model = try await catalog.model(id)
+        return Answer.value(try await withTimeout(stepTimeout) {
+            try await DecisionByLanguageModel.decide(questions, about: text, model: model)
+        })
     }
 
     private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID,

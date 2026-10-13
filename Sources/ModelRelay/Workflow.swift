@@ -61,6 +61,10 @@ public struct Step: Codable, Sendable, Hashable {
         /// `kits` names reusable `ToolKit`s (by id) whose tools are added to
         /// `tools`; the runner is given the kits.
         case agent(instruction: String, tools: [AgentTool], kits: [String]? = nil)
+        /// Answers typed questions about the text (yes/no, one of, score) in
+        /// one go. A `DecisionModel` also gives probabilities; a language model
+        /// answers with a guided schema. The result has one field per question.
+        case decide(questions: [Question])
         /// Calls an HTTP API. A JSON response becomes fields (`{{step.field}}`),
         /// anything else text. No model; never retried.
         case request(HTTPRequest)

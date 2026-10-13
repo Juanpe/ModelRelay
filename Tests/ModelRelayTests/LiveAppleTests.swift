@@ -22,4 +22,17 @@ struct LiveAppleTests {
         #expect(report.records.first?.toolCalls == ["getWeather"])
         #expect(report.output.textValue.contains("23"))
     }
+
+    @Test func onDeviceModelAnswersDecideQuestions() async throws {
+        let workflow = Workflow(name: "Ticket", steps: [Step("ticket", .decide(questions: [
+            Question("damaged", "Does the customer report a damaged item?", .yesNo),
+            Question("queue", "Which team should handle it?", .choice([.init("billing", description: "Refunds and payments"),
+                                                                     .init("shipping", description: "Delivery and damaged items")])),
+            Question("urgency", "How urgent is it?", .score(["low", "medium", "high"])),
+        ]), model: .appleOnDevice)])
+        let report = try await WorkflowRunner().run(workflow, input: .text("The package arrived with a broken screen. I need it for work tomorrow."))
+        print("LIVE decide:", report.output.textValue.replacingOccurrences(of: "\n", with: " | "), "|", report.duration)
+        #expect(report.output["damaged"] == .bool(true))
+        #expect(report.output["queue"] == .text("shipping"))
+    }
 }

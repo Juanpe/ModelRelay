@@ -29,7 +29,8 @@ report.output["total"]   // .number(8.3)
 - **Step**: `prompt` (text), `extract` (typed fields, guided generation),
   `classify` (one label), `template` (`{{step.field}}` substitution, no model),
   `request` (an HTTP API call; a JSON response becomes fields), `agent` (a
-  model that may call your requests as tools before answering).
+  model that may call your requests as tools before answering), `decide`
+  (typed questions answered at once), `switchOn` (a path per value).
 - **Values**: typed (`text`, `number`, `bool`, `list`, `dictionary`), so results
   are easy to hand to Shortcuts or any caller.
 - **Models**: a `ModelCatalog` maps a `ModelID` to a `LanguageModel`. Apple's
@@ -71,6 +72,27 @@ Step("answer", .agent(instruction: "Answer the question.", tools: [weather]), mo
 Tools follow the same rules as request steps (escaping, secrets, `WritePolicy`).
 One agent step makes at most six calls, and once a tool has run, a failure is
 not retried on the fallback model, so nothing is done twice.
+
+Tools can be grouped in a `ToolKit` and shared: an agent names kits by id
+(`.agent(instruction:tools:kits:)`) and the runner is given the kits.
+
+## Decisions
+
+A `decide` step asks typed questions about its text in one go: yes/no, one
+of some options, or a level. A `DecisionModel` such as TypeSafe's Jev (through
+Vercel AI Gateway, `DecisionsAPIModel` in `ModelRelayCloud`) answers with how
+sure it is; any language model answers the same questions with a guided
+schema, so the step also works offline and can fall back to Apple's model.
+
+```swift
+Step("ticket", .decide(questions: [
+    Question("damaged", "Does the customer report a damaged item?", .yesNo),
+    Question("team", "Which team should handle it?", .choice([.init("billing"), .init("shipping")])),
+    Question("urgency", "How urgent is it?", .score(["low", "medium", "high"])),
+]), model: "jev", fallback: .appleOnDevice)
+
+let catalog = ModelCatalog().registering(decisions: "jev") { DecisionsAPIModel(apiKey: key) }
+```
 
 `ModelRelayCloud` adds `ClaudeModel` and `OpenAICompatibleModel` (OpenAI,
 Ollama, LM Studio) as FoundationModels `LanguageModel`s with guided generation:
