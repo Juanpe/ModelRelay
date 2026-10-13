@@ -234,3 +234,26 @@ import Testing
         #expect(seen.withLock { Set($0) } == ["first", "a", "b"])
     }
 }
+
+@Suite struct ClassifyWithDecisionModelTests {
+    struct Picker: DecisionModel {
+        func decide(_ questions: [Question], about input: String) async throws -> [Answer] {
+            #expect(input == "Server is down")
+            return [Answer(name: questions[0].name, result: .choice("urgent"), confidence: 0.9)]
+        }
+    }
+
+    @Test func classifyRunsOnADecisionModel() async throws {
+        let runner = WorkflowRunner(catalog: ModelCatalog().registering(decisions: "jev") { Picker() })
+        let workflow = Workflow(name: "T", steps: [
+            Step("label", .classify(instruction: "Is it urgent?", labels: ["urgent", "later"]), model: "jev"),
+        ])
+        #expect(try await runner.run(workflow, input: .text("Server is down")).output == .text("urgent"))
+    }
+
+    @Test func textStepsExplainADecisionModelCantWrite() async throws {
+        let runner = WorkflowRunner(catalog: ModelCatalog().registering(decisions: "jev") { Picker() })
+        let workflow = Workflow(name: "T", steps: [Step("ask", .prompt(instruction: "Hi"), model: "jev")])
+        await #expect(throws: RelayError.self) { try await runner.run(workflow, input: .text("x")) }
+    }
+}

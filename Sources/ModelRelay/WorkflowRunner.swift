@@ -306,6 +306,20 @@ public actor WorkflowRunner {
 
     private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID,
                           tools: [any Tool] = []) async throws -> Value {
+        // A decision model can classify (one choice question) but not write text.
+        if let decisions = try await catalog.decisionModel(id) {
+            guard case .classify(let instruction, let labels) = kind else {
+                throw InvalidOutput(reason: "\(id) answers questions; it can't write text. Use it in Decide or Classify")
+            }
+            let question = Question("label", instruction.isEmpty ? "Which label fits?" : instruction,
+                                    .choice(labels.map { Question.Option($0) }))
+            let input = prompt.components(separatedBy: "\n\nInput:\n").last ?? prompt
+            let answers = try await withTimeout(stepTimeout) { try await decisions.decide([question], about: input) }
+            guard case .choice(let label)? = answers.first?.result, labels.contains(label) else {
+                throw InvalidOutput(reason: "Expected one of \(labels)")
+            }
+            return .text(label)
+        }
         let model = try await catalog.model(id)
         return try await withTimeout(stepTimeout) { try await Self.respond(kind, prompt: prompt, model: model, tools: tools) }
     }
