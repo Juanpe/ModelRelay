@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import ModelRelay
 
@@ -216,5 +217,20 @@ import Testing
         let workflow = Workflow(name: "T", steps: [Step("line", .template("With {{input}}"))])
         let report = try await WorkflowRunner().run(workflow, input: .list([.text("Ana"), .text("Luis")]))
         #expect(report.output == .text("With Ana, Luis"))
+    }
+}
+
+@Suite struct StepObserverTests {
+    @Test func stepsAreReportedAsTheyFinishEvenWhenALaterOneFails() async throws {
+        let seen = Mutex<[String]>([])
+        let workflow = Workflow(name: "W", steps: [
+            Step("first", .template("one")),
+            Step("both", .parallel([Step("a", .template("A")), Step("b", .template("B"))])),
+            Step("broken", .prompt(instruction: "x")),
+        ])
+        await #expect(throws: RelayError.missingModel(step: "broken")) {
+            try await WorkflowRunner().run(workflow, input: .text("")) { record in seen.withLock { $0.append(record.step) } }
+        }
+        #expect(seen.withLock { Set($0) } == ["first", "a", "b"])
     }
 }

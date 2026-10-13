@@ -145,3 +145,22 @@ struct FakeSecrets: SecretProvider {
         #expect(try JSONDecoder().decode(Step.self, from: data) == step)
     }
 }
+
+@Suite struct SecretInPathTests {
+    @Test func botTokensKeepTheirColonInThePath() async throws {
+        let server = FakeServer(json: #"{"ok": true}"#)
+        let runner = WorkflowRunner(requests: server,
+                                    secrets: FakeSecrets(values: ["TELEGRAM_BOT_TOKEN": "123456:ABC-def_9", "TELEGRAM_CHAT_ID": "-1001"]),
+                                    writePolicy: .allow)
+        let workflow = Workflow(name: "Telegram", steps: [
+            Step("send", .request(HTTPRequest(.post, url: "https://api.telegram.org/bot{{secret.TELEGRAM_BOT_TOKEN}}/sendMessage",
+                                              body: #"{"chat_id": "{{secret.TELEGRAM_CHAT_ID}}", "text": "{{input}}"}"#))),
+        ])
+        _ = try await runner.run(workflow, input: .text("Summary: \"quotes\" and a/slash"))
+        let sent = try #require(server.requests.first)
+        #expect(sent.url.absoluteString == "https://api.telegram.org/bot123456:ABC-def_9/sendMessage")
+        let body = try JSONSerialization.jsonObject(with: try #require(sent.body)) as? [String: String]
+        #expect(body == ["chat_id": "-1001", "text": "Summary: \"quotes\" and a/slash"])
+        #expect(!sent.description.contains("123456:ABC"))
+    }
+}

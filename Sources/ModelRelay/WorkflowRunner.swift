@@ -60,9 +60,12 @@ public actor WorkflowRunner {
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
-    public func run(_ workflow: Workflow, input: Value) async throws -> RunReport {
+    /// `onStep` is called as each step finishes (or is skipped), so a caller
+    /// keeps what ran even if a later step fails, or shows progress live.
+    public func run(_ workflow: Workflow, input: Value,
+                    onStep: (@Sendable (StepRecord) -> Void)? = nil) async throws -> RunReport {
         let start = clock.now
-        var scope = Scope(input: input)
+        var scope = Scope(input: input, observer: onStep)
         let last = try await runSteps(workflow.steps, scope: &scope)
         let output = workflow.output.flatMap { scope.results[$0] } ?? last
         return RunReport(output: output, records: scope.records, duration: clock.now - start)
@@ -75,10 +78,17 @@ public actor WorkflowRunner {
         var results: [String: Value] = [:]
         var records: [StepRecord] = []
         var previous: Value
+        let observer: (@Sendable (StepRecord) -> Void)?
 
-        init(input: Value) {
+        init(input: Value, observer: (@Sendable (StepRecord) -> Void)? = nil) {
             self.input = input
             self.previous = input
+            self.observer = observer
+        }
+
+        mutating func record(_ record: StepRecord) {
+            records.append(record)
+            observer?(record)
         }
 
         /// `input`, `step` or `step.field`.
@@ -113,13 +123,13 @@ public actor WorkflowRunner {
         switch step.kind {
         case .template(let template):
             let value = Value.text(Template.render(template, scope.resolve))
-            scope.records.append(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
+            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
                                             duration: clock.now - start, skipped: false))
             return value
 
         case .request(let request):
             let value = try await context.perform(request, step: step.name, resolve: scope.resolve)
-            scope.records.append(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
+            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
                                             duration: clock.now - start, skipped: false))
             return value
 
@@ -128,7 +138,7 @@ public actor WorkflowRunner {
             let branch = value.textValue == expected ? then : otherwise
             let skipped = value.textValue == expected ? otherwise : then
             for step in skipped.flatMap(Self.flatten) {
-                scope.records.append(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
+                scope.record(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
                                                 duration: .zero, skipped: true))
             }
             return try await runSteps(branch, scope: &scope)
@@ -142,7 +152,7 @@ public actor WorkflowRunner {
             for (index, item) in cases.enumerated() where index != chosen { skipped += item.steps }
             if chosen == nil { skipped = cases.flatMap(\.steps) }
             for step in skipped.flatMap(Self.flatten) {
-                scope.records.append(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
+                scope.record(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
                                                 duration: .zero, skipped: true))
             }
             return try await runSteps(branch, scope: &scope)
@@ -206,7 +216,7 @@ public actor WorkflowRunner {
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
-            scope.records.append(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
+            scope.record(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
                                             duration: clock.now - start, skipped: false, toolCalls: log.calls))
             return value
 
@@ -218,7 +228,7 @@ public actor WorkflowRunner {
             let text = source.textValue
             do {
                 let value = try await decide(questions, about: text, model: primary)
-                scope.records.append(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
+                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
                                                 duration: clock.now - start, skipped: false))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
@@ -229,7 +239,7 @@ public actor WorkflowRunner {
                 }
                 do {
                     let value = try await decide(questions, about: text, model: fallback)
-                    scope.records.append(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
+                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
                                                     duration: clock.now - start, skipped: false))
                     return value
                 } catch {
@@ -242,7 +252,7 @@ public actor WorkflowRunner {
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
             do {
                 let value = try await generate(step.kind, prompt: prompt, model: primary)
-                scope.records.append(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
+                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
                                                 duration: clock.now - start, skipped: false))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
@@ -254,7 +264,7 @@ public actor WorkflowRunner {
                 // One retry on the fallback model; never more (no retry loops).
                 do {
                     let value = try await generate(step.kind, prompt: prompt, model: fallback)
-                    scope.records.append(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
+                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
                                                     duration: clock.now - start, skipped: false))
                     return value
                 } catch {

@@ -140,7 +140,14 @@ enum RequestBuilder {
             return resolve(reference)
         }
 
-        let urlText = Template.render(request.url, lookup, escape: Self.percentEncode)
+        // Secrets are the person's own values (a Telegram bot token is
+        // `123:ABC` inside the path), so they keep `:` in the URL; values from
+        // earlier steps are fully encoded and can't change the URL's shape.
+        var urlTemplate = request.url
+        for (name, value) in secrets {
+            urlTemplate = urlTemplate.replacingOccurrences(of: "{{secret.\(name)}}", with: Self.secretEncode(value))
+        }
+        let urlText = Template.render(urlTemplate, lookup, escape: Self.percentEncode)
         guard let url = URL(string: urlText), let scheme = url.scheme?.lowercased(),
               scheme == "https" || scheme == "http", url.host != nil else {
             throw InvalidRequest(reason: "“\(request.url)” isn't a valid http or https URL")
@@ -173,6 +180,12 @@ enum RequestBuilder {
     static func percentEncode(_ text: String) -> String {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&=+?#/:@;")
+        return text.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+
+    static func secretEncode(_ text: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#&=+@;")
         return text.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 
