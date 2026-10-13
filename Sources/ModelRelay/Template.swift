@@ -14,9 +14,18 @@ enum Template {
                 return output
             }
             let reference = rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces)
-            output += escape(resolve(reference)?.textValue ?? "")
+            output += escape(resolve(reference).map(inlineText) ?? "")
             rest = rest[close.upperBound...]
         }
         return output + rest
+    }
+
+    /// A value as it reads inside a sentence: a list of words joined with
+    /// commas, everything else as its plain text.
+    private static func inlineText(_ value: Value) -> String {
+        if case .list(let items) = value, items.allSatisfy({ if case .list = $0 { false } else if case .dictionary = $0 { false } else { true } }) {
+            return items.map(\.textValue).joined(separator: ", ")
+        }
+        return value.textValue
     }
 }

@@ -17,6 +17,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     }
 
     nonisolated(unsafe) static var reply: (status: Int, body: String) = (200, "{}")
+    /// Replies used in order before falling back to `reply`.
+    nonisolated(unsafe) static var queue: [(status: Int, body: String)] = []
     nonisolated(unsafe) static var sent: [Sent] = []
 
     static func configuration() -> URLSessionConfiguration {
@@ -43,9 +45,10 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         Self.sent.append(Sent(url: request.url!, method: request.httpMethod ?? "GET",
                               headers: request.allHTTPHeaderFields ?? [:],
                               body: body))
-        let response = HTTPURLResponse(url: request.url!, statusCode: Self.reply.status, httpVersion: nil, headerFields: nil)!
+        let next = Self.queue.isEmpty ? Self.reply : Self.queue.removeFirst()
+        let response = HTTPURLResponse(url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(Self.reply.body.utf8))
+        client?.urlProtocol(self, didLoad: Data(next.body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -55,6 +58,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 @Suite(.serialized) struct NetworkTests {
     init() {
         StubProtocol.sent = []
+        StubProtocol.queue = []
         CloudHTTP.session.withLock { $0 = URLSession(configuration: StubProtocol.configuration()) }
     }
 
@@ -168,5 +172,62 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         await #expect(throws: CloudModelError.self) {
             try await DecisionsAPIModel(apiKey: "k").decide([Question("damaged", "Damaged?", .yesNo)], about: "x")
         }
+    }
+
+    private struct WeatherAPI: RequestPerformer {
+        func perform(_ request: PreparedRequest) async throws -> HTTPResponse {
+            HTTPResponse(status: 200, body: Data(#"{"temp": 19}"#.utf8))
+        }
+    }
+
+    private var weatherAgent: (ModelID) -> Workflow {
+        { model in
+            Workflow(name: "W", steps: [Step("answer", .agent(instruction: "Answer.", tools: [
+                AgentTool(name: "getWeather", description: "Weather for a city.", parameters: [Field("city", .text)],
+                          request: HTTPRequest(url: "https://weather.test/?q={{args.city}}")),
+            ]), model: model)])
+        }
+    }
+
+    @Test func openAICompatibleAgentsCallTools() async throws {
+        StubProtocol.queue = [
+            (200, #"{"choices": [{"message": {"content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "getWeather", "arguments": "{\"city\": \"Lisbon\"}"}}]}}]}"#),
+            (200, #"{"choices": [{"message": {"content": "19 degrees in Lisbon."}}]}"#),
+        ]
+        let catalog = ModelCatalog().registering("ollama") {
+            OpenAICompatibleModel(baseURL: URL(string: "http://localhost:11434/v1")!, model: "qwen2.5")
+        }
+        let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
+            .run(weatherAgent("ollama"), input: .text("Weather in Lisbon?"))
+        #expect(report.output == .text("19 degrees in Lisbon."))
+        #expect(report.records.first?.toolCalls == ["getWeather"])
+
+        let first = try #require(StubProtocol.sent.first)
+        let tools = try #require(first.json["tools"] as? [[String: Any]])
+        #expect((tools.first?["function"] as? [String: Any])?["name"] as? String == "getWeather")
+        let second = try #require(StubProtocol.sent.last?.json["messages"] as? [[String: Any]])
+        #expect(second.contains { $0["role"] as? String == "assistant" && $0["tool_calls"] != nil })
+        let result = try #require(second.last)
+        #expect(result["role"] as? String == "tool")
+        #expect(result["tool_call_id"] as? String == "call_1")
+        #expect((result["content"] as? String)?.contains("19") == true)
+    }
+
+    @Test func claudeAgentsCallTools() async throws {
+        StubProtocol.queue = [
+            (200, #"{"content": [{"type": "tool_use", "id": "toolu_1", "name": "getWeather", "input": {"city": "Lisbon"}}], "stop_reason": "tool_use"}"#),
+            (200, #"{"content": [{"type": "text", "text": "It's 19 degrees."}]}"#),
+        ]
+        let catalog = ModelCatalog().registering("claude") { ClaudeModel(model: "claude-haiku-5-5", apiKey: "k") }
+        let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
+            .run(weatherAgent("claude"), input: .text("Weather in Lisbon?"))
+        #expect(report.output == .text("It's 19 degrees."))
+
+        let messages = try #require(StubProtocol.sent.last?.json["messages"] as? [[String: Any]])
+        let assistant = try #require(messages.first { $0["role"] as? String == "assistant" }?["content"] as? [[String: Any]])
+        #expect(assistant.first?["type"] as? String == "tool_use")
+        let reply = try #require(messages.last?["content"] as? [[String: Any]])
+        #expect(reply.first?["type"] as? String == "tool_result")
+        #expect(reply.first?["tool_use_id"] as? String == "toolu_1")
     }
 }

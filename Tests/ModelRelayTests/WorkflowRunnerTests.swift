@@ -190,3 +190,31 @@ import Testing
         #expect(report.records.first?.usedFallback == true)
     }
 }
+
+@Suite struct DecideValidationTests {
+    @Test func incompleteQuestionsFailBeforeAnythingIsSent() async throws {
+        let model = ScriptedModel("small", replies: ["{}"])
+        let runner = WorkflowRunner(catalog: .scripted(["small": model]))
+        let cases: [([Question], String)] = [
+            ([Question("urgent", "", .yesNo)], "Question “urgent” has no question text"),
+            ([Question("team", "Which?", .choice([]))], "Question “team” needs between 1 and 255 options"),
+            ([Question("level", "How?", .score(["only"]))], "Question “level” needs between 2 and 10 levels"),
+            ([Question("a", "A?", .yesNo), Question("a", "B?", .yesNo)], "Two questions share a name"),
+        ]
+        for (questions, reason) in cases {
+            let workflow = Workflow(name: "D", steps: [Step("decision", .decide(questions: questions), model: "small")])
+            await #expect(throws: RelayError.stepFailed(step: "decision", reason: reason)) {
+                try await runner.run(workflow, input: .text("the bill is pending"))
+            }
+        }
+        #expect(model.callCount == 0)
+    }
+}
+
+@Suite struct TemplateListTests {
+    @Test func listsReadAsCommaSeparatedInText() async throws {
+        let workflow = Workflow(name: "T", steps: [Step("line", .template("With {{input}}"))])
+        let report = try await WorkflowRunner().run(workflow, input: .list([.text("Ana"), .text("Luis")]))
+        #expect(report.output == .text("With Ana, Luis"))
+    }
+}

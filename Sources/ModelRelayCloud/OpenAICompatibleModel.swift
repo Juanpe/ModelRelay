@@ -17,7 +17,7 @@ public struct OpenAICompatibleModel: LanguageModel, Hashable {
         self.apiKey = apiKey
     }
 
-    public var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration]) }
+    public var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration, .toolCalling]) }
     public var executorConfiguration: OpenAICompatibleModel { self }
 
     public struct Executor: LanguageModelExecutor {
@@ -29,9 +29,26 @@ public struct OpenAICompatibleModel: LanguageModel, Hashable {
             let chat = ChatTurns(request.transcript)
             var messages: [[String: Any]] = []
             if !chat.system.isEmpty { messages.append(["role": "system", "content": chat.system]) }
-            messages += chat.turns.map { ["role": $0.role, "content": $0.text] }
+            for turn in chat.turns {
+                switch turn {
+                case .user(let text): messages.append(["role": "user", "content": text])
+                case .assistant(let text): messages.append(["role": "assistant", "content": text])
+                case .toolCalls(let calls):
+                    messages.append(["role": "assistant", "content": NSNull(), "tool_calls": calls.map { call in
+                        ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]]
+                    }])
+                case .toolResult(let id, _, let text):
+                    messages.append(["role": "tool", "tool_call_id": id, "content": text])
+                }
+            }
 
             var body: [String: Any] = ["model": model.model, "messages": messages]
+            if !request.enabledToolDefinitions.isEmpty {
+                body["tools"] = request.enabledToolDefinitions.map { tool in
+                    ["type": "function", "function": ["name": tool.name, "description": tool.description,
+                                                      "parameters": ChatTurns.parameters(tool)]]
+                }
+            }
             if let temperature = request.generationOptions.temperature { body["temperature"] = temperature }
             if let limit = request.generationOptions.maximumResponseTokens { body["max_tokens"] = limit }
             let schema = try request.schema.map(CloudSchema.init)
@@ -45,6 +62,18 @@ public struct OpenAICompatibleModel: LanguageModel, Hashable {
             let reply = try await CloudHTTP.postJSON(model.baseURL.appending(path: "chat/completions"),
                                                     headers: headers, body: body)
             let message = ((reply["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])
+            // The model wants tools: hand the calls to the session, which runs
+            // them and asks again with their results.
+            if let calls = message?["tool_calls"] as? [[String: Any]], !calls.isEmpty {
+                for call in calls {
+                    let function = call["function"] as? [String: Any]
+                    let arguments = ChatTurns.jsonString(ChatTurns.object(function?["arguments"]))
+                    await channel.send(.toolCalls(action: .toolCall(id: call["id"] as? String ?? UUID().uuidString,
+                                                                    name: function?["name"] as? String ?? "",
+                                                                    action: .appendArguments(arguments, tokenCount: 1))))
+                }
+                return
+            }
             guard let text = message?["content"] as? String else {
                 throw CloudModelError(status: 200, message: "The reply had no text")
             }

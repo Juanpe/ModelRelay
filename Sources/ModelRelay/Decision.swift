@@ -61,6 +61,31 @@ public protocol DecisionModel: Sendable {
     func decide(_ questions: [Question], about input: String) async throws -> [Answer]
 }
 
+extension Question {
+    /// What's wrong with this question for a decision model, or nil. Checked
+    /// before anything is sent, so the reason is clear instead of an HTTP 400.
+    public var problem: String? {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { return "A question has no name" }
+        if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Question “\(name)” has no question text" }
+        switch kind {
+        case .yesNo: return nil
+        case .choice(let options):
+            if options.isEmpty || options.count > 255 { return "Question “\(name)” needs between 1 and 255 options" }
+            if Set(options.map(\.value)).count != options.count { return "Question “\(name)” repeats an option" }
+            return nil
+        case .score(let levels):
+            if levels.count < 2 || levels.count > 10 { return "Question “\(name)” needs between 2 and 10 levels" }
+            return nil
+        }
+    }
+
+    static func problem(in questions: [Question]) -> String? {
+        if questions.isEmpty { return "There are no questions" }
+        if Set(questions.map(\.name)).count != questions.count { return "Two questions share a name" }
+        return questions.lazy.compactMap(\.problem).first
+    }
+}
+
 extension Answer {
     /// The step's result: one field per question, plus `confidence` per
     /// question when the model gave it, and `scores` for score questions.

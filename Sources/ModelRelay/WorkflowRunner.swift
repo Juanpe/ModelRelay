@@ -212,6 +212,9 @@ public actor WorkflowRunner {
 
         case .decide(let questions):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
+            if let problem = Question.problem(in: questions) {
+                throw RelayError.stepFailed(step: step.name, reason: problem)
+            }
             let text = source.textValue
             do {
                 let value = try await decide(questions, about: text, model: primary)

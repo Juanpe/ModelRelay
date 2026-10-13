@@ -19,7 +19,7 @@ public struct ClaudeModel: LanguageModel, Hashable {
         self.maxTokens = maxTokens
     }
 
-    public var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration]) }
+    public var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.guidedGeneration, .toolCalling]) }
     public var executorConfiguration: ClaudeModel { self }
 
     public struct Executor: LanguageModelExecutor {
@@ -32,7 +32,7 @@ public struct ClaudeModel: LanguageModel, Hashable {
             var body: [String: Any] = [
                 "model": model.model,
                 "max_tokens": request.generationOptions.maximumResponseTokens ?? model.maxTokens,
-                "messages": chat.turns.map { ["role": $0.role, "content": $0.text] },
+                "messages": ClaudeModel.messages(chat.turns),
             ]
             if !chat.system.isEmpty { body["system"] = chat.system }
             if let temperature = request.generationOptions.temperature { body["temperature"] = temperature }
@@ -41,6 +41,10 @@ public struct ClaudeModel: LanguageModel, Hashable {
                 body["tools"] = [["name": "respond", "description": "Give the answer in this exact shape.",
                                   "input_schema": schema.json]]
                 body["tool_choice"] = ["type": "tool", "name": "respond"]
+            } else if !request.enabledToolDefinitions.isEmpty {
+                body["tools"] = request.enabledToolDefinitions.map { tool in
+                    ["name": tool.name, "description": tool.description, "input_schema": ChatTurns.parameters(tool)]
+                }
             }
 
             let reply = try await CloudHTTP.postJSON(model.baseURL.appending(path: "messages"),
@@ -54,10 +58,49 @@ public struct ClaudeModel: LanguageModel, Hashable {
                 }
                 output = try schema.content(from: input)
             } else {
+                // Claude wants tools: hand the calls to the session, which runs
+                // them and asks again with their results.
+                let uses = blocks.filter { $0["type"] as? String == "tool_use" }
+                if !uses.isEmpty {
+                    for use in uses {
+                        await channel.send(.toolCalls(action: .toolCall(
+                            id: use["id"] as? String ?? UUID().uuidString, name: use["name"] as? String ?? "",
+                            action: .appendArguments(ChatTurns.jsonString(ChatTurns.object(use["input"])), tokenCount: 1))))
+                    }
+                    return
+                }
                 output = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined()
             }
             await channel.send(.response(action: .appendText(output, tokenCount: 1)))
         }
+    }
+}
+
+extension ClaudeModel {
+    /// Messages API turns: tool calls are `tool_use` blocks from the assistant,
+    /// their results `tool_result` blocks from the user, grouped per turn.
+    static func messages(_ turns: [ChatTurns.Turn]) -> [[String: Any]] {
+        var messages: [[String: Any]] = []
+        func append(_ role: String, _ blocks: [[String: Any]]) {
+            if var last = messages.last, last["role"] as? String == role, var content = last["content"] as? [[String: Any]] {
+                content += blocks
+                last["content"] = content
+                messages[messages.count - 1] = last
+            } else {
+                messages.append(["role": role, "content": blocks])
+            }
+        }
+        for turn in turns {
+            switch turn {
+            case .user(let text): append("user", [["type": "text", "text": text]])
+            case .assistant(let text): append("assistant", [["type": "text", "text": text]])
+            case .toolCalls(let calls):
+                append("assistant", calls.map { ["type": "tool_use", "id": $0.id, "name": $0.name, "input": ChatTurns.object($0.arguments)] })
+            case .toolResult(let id, _, let text):
+                append("user", [["type": "tool_result", "tool_use_id": id, "content": text]])
+            }
+        }
+        return messages
     }
 }
 

@@ -95,7 +95,8 @@ let catalog = ModelCatalog().registering(decisions: "jev") { DecisionsAPIModel(a
 ```
 
 `ModelRelayCloud` adds `ClaudeModel` and `OpenAICompatibleModel` (OpenAI,
-Ollama, LM Studio) as FoundationModels `LanguageModel`s with guided generation:
+Ollama, LM Studio) as FoundationModels `LanguageModel`s with guided generation
+and tool calling, so they can also be an agent step's model:
 
 ```swift
 let catalog = ModelCatalog()
