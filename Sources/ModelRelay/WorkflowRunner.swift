@@ -44,6 +44,7 @@ public actor WorkflowRunner {
     private let catalog: ModelCatalog
     private let stepTimeout: Duration
     private let context: RequestContext
+    private let toolKits: [String: ToolKit]
     private let clock = ContinuousClock()
 
     /// `stepTimeout` bounds one model call or request. Small models occasionally
@@ -52,9 +53,10 @@ public actor WorkflowRunner {
     /// something also need a `writePolicy` that allows them.
     public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30),
                 requests: (any RequestPerformer)? = nil, secrets: (any SecretProvider)? = nil,
-                writePolicy: WritePolicy = .deny) {
+                writePolicy: WritePolicy = .deny, toolKits: [ToolKit] = []) {
         self.catalog = catalog
         self.stepTimeout = stepTimeout
+        self.toolKits = Dictionary(toolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
@@ -168,8 +170,15 @@ public actor WorkflowRunner {
             }
             return .dictionary(merged)
 
-        case .agent(_, let specs):
+        case .agent(_, let ownTools, let kitIDs):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
+            var specs = ownTools
+            for id in kitIDs ?? [] {
+                guard let kit = toolKits[id] else {
+                    throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(id)” isn't available")
+                }
+                specs += kit.tools
+            }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
             let snapshot = scope
             let log = ToolCallLog(limit: AgentTool.maxCallsPerStep)
@@ -240,7 +249,7 @@ public actor WorkflowRunner {
     private static func prompt(for kind: Step.Kind, source: Value, resolve: (String) -> Value?) -> String {
         let instruction: String = switch kind {
         case .prompt(let instruction), .extract(let instruction, _), .classify(let instruction, _),
-             .agent(let instruction, _): instruction
+             .agent(let instruction, _, _): instruction
         default: ""
         }
         let rendered = Template.render(instruction, resolve)

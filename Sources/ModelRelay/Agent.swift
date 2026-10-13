@@ -24,6 +24,22 @@ public struct AgentTool: Codable, Sendable, Hashable {
     }
 }
 
+/// A set of tools defined once and shared by many agent steps, such as all
+/// the calls to one API. Agents name it by `id`.
+public struct ToolKit: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var name: String
+    public var summary: String
+    public var tools: [AgentTool]
+
+    public init(id: String, name: String, summary: String = "", tools: [AgentTool]) {
+        self.id = id
+        self.name = name
+        self.summary = summary
+        self.tools = tools
+    }
+}
+
 /// What request steps and agent tools need to make a call.
 struct RequestContext: Sendable {
     var requests: (any RequestPerformer)?

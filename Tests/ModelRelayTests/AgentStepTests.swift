@@ -107,3 +107,38 @@ import Testing
         }
     }
 }
+
+@Suite struct ToolKitTests {
+    private let kit = ToolKit(id: "weather-api", name: "Weather", tools: [
+        AgentTool(name: "weather", description: "Weather.", parameters: [Field("city", .text)],
+                  request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")),
+    ])
+
+    @Test func agentsUseToolsFromAKit() async throws {
+        let model = ScriptedModel("small", replies: [#"<tool:weather>{"city": "Oslo"}"#, "Cold."])
+        let server = FakeServer(json: #"{"temp": -2}"#)
+        let runner = WorkflowRunner(catalog: .scripted(["small": model]), requests: server, toolKits: [kit])
+        let workflow = Workflow(name: "W", steps: [
+            Step("answer", .agent(instruction: "Answer.", tools: [], kits: ["weather-api"]), model: "small"),
+        ])
+        let report = try await runner.run(workflow, input: .text("Oslo?"))
+        #expect(report.records.first?.toolCalls == ["weather"])
+        #expect(server.requests.first?.url.absoluteString == "https://api.example.com/w?q=Oslo")
+    }
+
+    @Test func aMissingKitFailsClearly() async throws {
+        let runner = WorkflowRunner(catalog: .scripted(["small": ScriptedModel("small", replies: ["x"])]))
+        let workflow = Workflow(name: "W", steps: [
+            Step("answer", .agent(instruction: "Answer.", tools: [], kits: ["gone"]), model: "small"),
+        ])
+        await #expect(throws: RelayError.stepFailed(step: "answer", reason: "the tool set “gone” isn't available")) {
+            try await runner.run(workflow, input: .text(""))
+        }
+    }
+
+    @Test func olderAgentStepsStillDecode() throws {
+        let json = #"{"name":"a","kind":{"agent":{"instruction":"Go.","tools":[]}}}"#
+        let step = try JSONDecoder().decode(Step.self, from: Data(json.utf8))
+        #expect(step.kind == .agent(instruction: "Go.", tools: [], kits: nil))
+    }
+}

@@ -58,7 +58,9 @@ public struct Step: Codable, Sendable, Hashable {
         case ifEquals(reference: String, value: String, then: [Step], otherwise: [Step])
         /// A model that may call the given tools (HTTP requests) before
         /// answering in text. At most `AgentTool.maxCallsPerStep` calls.
-        case agent(instruction: String, tools: [AgentTool])
+        /// `kits` names reusable `ToolKit`s (by id) whose tools are added to
+        /// `tools`; the runner is given the kits.
+        case agent(instruction: String, tools: [AgentTool], kits: [String]? = nil)
         /// Calls an HTTP API. A JSON response becomes fields (`{{step.field}}`),
         /// anything else text. No model; never retried.
         case request(HTTPRequest)
