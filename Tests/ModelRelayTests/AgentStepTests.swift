@@ -94,3 +94,16 @@ import Testing
         #expect(try JSONDecoder().decode(Step.self, from: JSONEncoder().encode(step)) == step)
     }
 }
+
+@Suite struct AgentErrorTests {
+    @Test func aFailedToolReadsClearly() async throws {
+        let model = ScriptedModel("small", replies: [#"<tool:weather>{"city": "Lisbon"}"#, "unused"])
+        let tool = AgentTool(name: "weather", description: "Weather.", parameters: [Field("city", .text)],
+                             request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}"))
+        let runner = WorkflowRunner(catalog: .scripted(["small": model]), requests: FakeServer(status: 503, json: "{}"))
+        let workflow = Workflow(name: "W", steps: [Step("answer", .agent(instruction: "Answer.", tools: [tool]), model: "small")])
+        await #expect(throws: RelayError.stepFailed(step: "answer", reason: "weather: The server answered HTTP 503")) {
+            try await runner.run(workflow, input: .text("?"))
+        }
+    }
+}

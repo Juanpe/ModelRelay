@@ -62,9 +62,24 @@ public struct Step: Codable, Sendable, Hashable {
         /// Calls an HTTP API. A JSON response becomes fields (`{{step.field}}`),
         /// anything else text. No model; never retried.
         case request(HTTPRequest)
+        /// Runs the steps of the first case whose value equals the referenced
+        /// value (ignoring case and surrounding spaces), else `otherwise`. The
+        /// block's result is the result of the branch that ran.
+        case switchOn(reference: String, cases: [SwitchCase], otherwise: [Step])
         /// Runs the steps concurrently on the same input. The block's result is a
         /// dictionary keyed by step name: this is the "merge".
         case parallel([Step])
+    }
+}
+
+/// One path of a `switchOn` step.
+public struct SwitchCase: Codable, Sendable, Hashable {
+    public var value: String
+    public var steps: [Step]
+
+    public init(_ value: String, steps: [Step] = []) {
+        self.value = value
+        self.steps = steps
     }
 }
 

@@ -81,6 +81,10 @@ extension JSONEncoder {
         case .ifEquals(let ref, let value, let then, let otherwise):
             step.kind = .ifEquals(reference: ref, value: value, then: overriding(then, model: model),
                                   otherwise: overriding(otherwise, model: model))
+        case .switchOn(let ref, let cases, let otherwise):
+            step.kind = .switchOn(reference: ref,
+                                  cases: cases.map { SwitchCase($0.value, steps: overriding($0.steps, model: model)) },
+                                  otherwise: overriding(otherwise, model: model))
         case .parallel(let children):
             step.kind = .parallel(overriding(children, model: model))
         case .prompt, .extract, .classify, .agent:

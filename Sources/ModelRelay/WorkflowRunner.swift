@@ -131,6 +131,20 @@ public actor WorkflowRunner {
             }
             return try await runSteps(branch, scope: &scope)
 
+        case .switchOn(let reference, let cases, let otherwise):
+            guard let value = scope.resolve(reference) else { throw RelayError.unknownReference(reference, step: step.name) }
+            let key = value.textValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let chosen = cases.firstIndex { $0.value.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(key) == .orderedSame }
+            let branch = chosen.map { cases[$0].steps } ?? otherwise
+            var skipped = otherwise
+            for (index, item) in cases.enumerated() where index != chosen { skipped += item.steps }
+            if chosen == nil { skipped = cases.flatMap(\.steps) }
+            for step in skipped.flatMap(Self.flatten) {
+                scope.records.append(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
+                                                duration: .zero, skipped: true))
+            }
+            return try await runSteps(branch, scope: &scope)
+
         case .parallel(let steps):
             let snapshot = scope
             let results = try await withThrowingTaskGroup(of: (Int, Value, [StepRecord]).self) { group in
@@ -173,14 +187,14 @@ public actor WorkflowRunner {
                 // A tool may already have changed something: only retry on the
                 // fallback model when no tool was called.
                 guard let fallback = step.fallback, log.calls.isEmpty else {
-                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
                 do {
                     value = try await generate(.prompt(instruction: ""), prompt: prompt, model: fallback, tools: tools)
                     model = fallback
                     usedFallback = true
                 } catch {
-                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
             scope.records.append(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
@@ -199,7 +213,7 @@ public actor WorkflowRunner {
                 throw error
             } catch {
                 guard let fallback = step.fallback else {
-                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
                 // One retry on the fallback model; never more (no retry loops).
                 do {
@@ -208,7 +222,7 @@ public actor WorkflowRunner {
                                                     duration: clock.now - start, skipped: false))
                     return value
                 } catch {
-                    throw RelayError.stepFailed(step: step.name, reason: String(describing: error))
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
         }
@@ -217,6 +231,7 @@ public actor WorkflowRunner {
     private static func flatten(_ step: Step) -> [Step] {
         switch step.kind {
         case .ifEquals(_, _, let then, let otherwise): [step] + (then + otherwise).flatMap(flatten)
+        case .switchOn(_, let cases, let otherwise): [step] + (cases.flatMap(\.steps) + otherwise).flatMap(flatten)
         case .parallel(let steps): [step] + steps.flatMap(flatten)
         default: [step]
         }

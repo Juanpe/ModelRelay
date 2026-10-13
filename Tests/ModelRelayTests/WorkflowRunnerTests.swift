@@ -112,3 +112,32 @@ import Testing
         #expect(String(decoding: data, as: UTF8.self).contains(#""model":"apple.on-device""#))
     }
 }
+
+@Suite struct SwitchStepTests {
+    private func workflow() -> Workflow {
+        Workflow(name: "Inbox", steps: [
+            Step("kind", .template("{{input}}")),
+            Step("route", .switchOn(reference: "kind", cases: [
+                SwitchCase("urgent", steps: [Step("alert", .template("Now: {{input}}"))]),
+                SwitchCase("meeting", steps: [Step("invite", .template("Meet: {{input}}"))]),
+            ], otherwise: [Step("later", .template("Later: {{input}}"))])),
+        ])
+    }
+
+    @Test func runsTheMatchingCase() async throws {
+        let report = try await WorkflowRunner().run(workflow(), input: .text(" Meeting "))
+        #expect(report.output == .text("Meet:  Meeting "))
+        #expect(Set(report.records.filter(\.skipped).map(\.step)) == ["alert", "later"])
+    }
+
+    @Test func fallsBackToOtherwise() async throws {
+        let report = try await WorkflowRunner().run(workflow(), input: .text("newsletter"))
+        #expect(report.output == .text("Later: newsletter"))
+        #expect(Set(report.records.filter(\.skipped).map(\.step)) == ["alert", "invite"])
+    }
+
+    @Test func roundTripsThroughJSON() throws {
+        let step = workflow().steps[1]
+        #expect(try JSONDecoder().decode(Step.self, from: JSONEncoder().encode(step)) == step)
+    }
+}

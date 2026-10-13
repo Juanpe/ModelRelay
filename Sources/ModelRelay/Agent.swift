@@ -44,7 +44,7 @@ struct RequestContext: Sendable {
         do {
             prepared = try RequestBuilder.prepare(request, secrets: values, resolve: resolve)
         } catch {
-            throw RelayError.stepFailed(step: step, reason: String(describing: error))
+            throw RelayError.stepFailed(step: step, reason: failureReason(error))
         }
         if request.method.isWrite {
             let allowed = switch writePolicy {
@@ -61,7 +61,7 @@ struct RequestContext: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw RelayError.stepFailed(step: step, reason: String(describing: error))
+            throw RelayError.stepFailed(step: step, reason: failureReason(error))
         }
     }
 }
@@ -155,4 +155,17 @@ private struct JSONValue: Encodable {
         case .dictionary(let fields): try container.encode(fields.mapValues(JSONValue.init))
         }
     }
+}
+
+/// A short, readable reason for a failed step: the request's own message for a
+/// failed tool ("getWeather: The server answered HTTP 503"), never a dump of
+/// the tool's internals.
+func failureReason(_ error: any Error) -> String {
+    if let toolError = error as? LanguageModelSession.ToolCallError {
+        return "\(toolError.tool.name): \(failureReason(toolError.underlyingError))"
+    }
+    if case RelayError.stepFailed(_, let reason) = error { return reason }
+    if case RelayError.writeNotAllowed = error { return "it wanted to change something and wasn't allowed" }
+    if case RelayError.missingSecret(let name, _) = error { return "the key \(name) is missing" }
+    return String(describing: error)
 }
