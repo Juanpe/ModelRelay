@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import FoundationModels
 
 struct InvalidOutput: Error, CustomStringConvertible {
@@ -29,6 +30,13 @@ public struct StepRecord: Sendable, Hashable {
     public var skipped: Bool
     /// Tools an agent step called, in order (empty for other steps).
     public var toolCalls: [String] = []
+    /// What the step read: the prompt a model was given, the text a decision
+    /// was about, or the request it sent with secrets hidden. Nil for steps
+    /// that read nothing of their own.
+    public var input: String? = nil
+    /// Why the step failed. Only on the record of the step a run stopped at,
+    /// which the observer receives before the run throws.
+    public var failure: String? = nil
 }
 
 public struct RunReport: Sendable {
@@ -60,8 +68,9 @@ public actor WorkflowRunner {
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
-    /// `onStep` is called as each step finishes (or is skipped), so a caller
-    /// keeps what ran even if a later step fails, or shows progress live.
+    /// `onStep` is called as each step finishes, is skipped or fails (the step
+    /// a run stops at gets a record with `failure` before the run throws), so a
+    /// caller keeps what ran, shows progress live, and can say why it stopped.
     public func run(_ workflow: Workflow, input: Value,
                     onStep: (@Sendable (StepRecord) -> Void)? = nil) async throws -> RunReport {
         let start = clock.now
@@ -103,14 +112,40 @@ public actor WorkflowRunner {
     private func runSteps(_ steps: [Step], scope: inout Scope) async throws -> Value {
         for step in steps {
             try Task.checkCancellation()
-            let value = try await runStep(step, scope: &scope)
+            let value = try await runRecordingFailure(step, scope: &scope)
             scope.results[step.name] = value
             scope.previous = value
         }
         return scope.previous
     }
 
-    private func runStep(_ step: Step, scope: inout Scope) async throws -> Value {
+    /// Runs a step; if a step that does work itself (not a block) fails, it
+    /// gets a record saying why and with what input, then the error goes on.
+    private func runRecordingFailure(_ step: Step, scope: inout Scope) async throws -> Value {
+        let start = clock.now
+        let trace = StepTrace()
+        do {
+            return try await runStep(step, scope: &scope, trace: trace)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if !Self.isBlock(step) {
+                scope.record(StepRecord(step: step.name, value: .null, model: step.model, usedFallback: false,
+                                        duration: clock.now - start, skipped: false, input: trace.input,
+                                        failure: failureReason(error)))
+            }
+            throw error
+        }
+    }
+
+    private static func isBlock(_ step: Step) -> Bool {
+        switch step.kind {
+        case .ifEquals, .switchOn, .parallel: true
+        default: false
+        }
+    }
+
+    private func runStep(_ step: Step, scope: inout Scope, trace: StepTrace) async throws -> Value {
         let start = clock.now
         let source: Value
         if let reference = step.input {
@@ -128,9 +163,9 @@ public actor WorkflowRunner {
             return value
 
         case .request(let request):
-            let value = try await context.perform(request, step: step.name, resolve: scope.resolve)
+            let value = try await context.perform(request, step: step.name, trace: trace, resolve: scope.resolve)
             scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
-                                            duration: clock.now - start, skipped: false))
+                                    duration: clock.now - start, skipped: false, input: trace.input))
             return value
 
         case .ifEquals(let reference, let expected, let then, let otherwise):
@@ -164,7 +199,7 @@ public actor WorkflowRunner {
                     group.addTask {
                         var local = snapshot
                         local.records = []
-                        let value = try await self.runStep(child, scope: &local)
+                        let value = try await self.runRecordingFailure(child, scope: &local)
                         return (index, value, local.records)
                     }
                 }
@@ -190,6 +225,7 @@ public actor WorkflowRunner {
                 specs += kit.tools
             }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
+            trace.input = prompt
             let snapshot = scope
             let log = ToolCallLog(limit: AgentTool.maxCallsPerStep)
             let tools: [any Tool] = specs.map {
@@ -217,7 +253,7 @@ public actor WorkflowRunner {
                 }
             }
             scope.record(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
-                                            duration: clock.now - start, skipped: false, toolCalls: log.calls))
+                                    duration: clock.now - start, skipped: false, toolCalls: log.calls, input: prompt))
             return value
 
         case .decide(let questions):
@@ -226,10 +262,11 @@ public actor WorkflowRunner {
                 throw RelayError.stepFailed(step: step.name, reason: problem)
             }
             let text = source.textValue
+            trace.input = text
             do {
                 let value = try await decide(questions, about: text, model: primary)
                 scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
-                                                duration: clock.now - start, skipped: false))
+                                        duration: clock.now - start, skipped: false, input: text))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
@@ -240,7 +277,7 @@ public actor WorkflowRunner {
                 do {
                     let value = try await decide(questions, about: text, model: fallback)
                     scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
-                                                    duration: clock.now - start, skipped: false))
+                                            duration: clock.now - start, skipped: false, input: text))
                     return value
                 } catch {
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
@@ -250,10 +287,11 @@ public actor WorkflowRunner {
         case .prompt, .extract, .classify:
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
+            trace.input = prompt
             do {
                 let value = try await generate(step.kind, prompt: prompt, model: primary)
                 scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
-                                                duration: clock.now - start, skipped: false))
+                                        duration: clock.now - start, skipped: false, input: prompt))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
@@ -265,7 +303,7 @@ public actor WorkflowRunner {
                 do {
                     let value = try await generate(step.kind, prompt: prompt, model: fallback)
                     scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
-                                                    duration: clock.now - start, skipped: false))
+                                            duration: clock.now - start, skipped: false, input: prompt))
                     return value
                 } catch {
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
@@ -344,5 +382,16 @@ public actor WorkflowRunner {
         default:
             return .text(try await session.respond(to: prompt).content)
         }
+    }
+}
+
+/// What one step read, filled in as soon as it's known so a failure record
+/// can include it.
+final class StepTrace: Sendable {
+    private let value = Mutex<String?>(nil)
+
+    var input: String? {
+        get { value.withLock { $0 } }
+        set { value.withLock { $0 = newValue } }
     }
 }

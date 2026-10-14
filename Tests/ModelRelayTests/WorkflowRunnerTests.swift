@@ -222,16 +222,19 @@ import Testing
 
 @Suite struct StepObserverTests {
     @Test func stepsAreReportedAsTheyFinishEvenWhenALaterOneFails() async throws {
-        let seen = Mutex<[String]>([])
+        let seen = Mutex<[StepRecord]>([])
         let workflow = Workflow(name: "W", steps: [
             Step("first", .template("one")),
             Step("both", .parallel([Step("a", .template("A")), Step("b", .template("B"))])),
             Step("broken", .prompt(instruction: "x")),
         ])
         await #expect(throws: RelayError.missingModel(step: "broken")) {
-            try await WorkflowRunner().run(workflow, input: .text("")) { record in seen.withLock { $0.append(record.step) } }
+            try await WorkflowRunner().run(workflow, input: .text("")) { record in seen.withLock { $0.append(record) } }
         }
-        #expect(seen.withLock { Set($0) } == ["first", "a", "b"])
+        // The steps that finished, then the one the run stopped at, with why.
+        #expect(seen.withLock { Set($0.map(\.step)) } == ["first", "a", "b", "broken"])
+        #expect(seen.withLock { $0.last }?.failure == "it has no model")
+        #expect(seen.withLock { $0.filter { $0.failure != nil }.count } == 1)
     }
 }
 

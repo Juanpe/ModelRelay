@@ -47,7 +47,9 @@ struct RequestContext: Sendable {
     var writePolicy: WritePolicy
     var timeout: Duration
 
-    func perform(_ request: HTTPRequest, step: String, resolve: (String) -> Value?) async throws -> Value {
+    /// `trace`, when given, receives the request as sent, with secrets hidden.
+    func perform(_ request: HTTPRequest, step: String, trace: StepTrace? = nil,
+                 resolve: (String) -> Value?) async throws -> Value {
         guard let requests else { throw RelayError.requestsUnavailable(step: step) }
         var values: [String: String] = [:]
         for name in RequestBuilder.secretNames(in: request) {
@@ -62,6 +64,7 @@ struct RequestContext: Sendable {
         } catch {
             throw RelayError.stepFailed(step: step, reason: failureReason(error))
         }
+        trace?.input = prepared.description
         if request.method.isWrite {
             let allowed = switch writePolicy {
             case .allow: true
@@ -77,7 +80,12 @@ struct RequestContext: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw RelayError.stepFailed(step: step, reason: failureReason(error))
+            // An error page can quote the request back: hide the secrets.
+            var reason = failureReason(error)
+            for secret in prepared.secrets where !secret.isEmpty {
+                reason = reason.replacingOccurrences(of: secret, with: "•••")
+            }
+            throw RelayError.stepFailed(step: step, reason: reason)
         }
     }
 }
@@ -183,5 +191,9 @@ func failureReason(_ error: any Error) -> String {
     if case RelayError.stepFailed(_, let reason) = error { return reason }
     if case RelayError.writeNotAllowed = error { return "it wanted to change something and wasn't allowed" }
     if case RelayError.missingSecret(let name, _) = error { return "the key \(name) is missing" }
+    if case RelayError.unknownModel(let id) = error { return "the model “\(id.rawValue)” isn't available" }
+    if case RelayError.missingModel = error { return "it has no model" }
+    if case RelayError.unknownReference(let reference, _) = error { return "“\(reference)” isn't available here" }
+    if case RelayError.requestsUnavailable = error { return "requests can't be made here" }
     return String(describing: error)
 }
