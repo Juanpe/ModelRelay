@@ -77,4 +77,9 @@ private final class Observed: Sendable {
         #expect(RequestBuilder.errorDetail(Data("plain reason".utf8)) == "plain reason")
         #expect(RequestBuilder.errorDetail(Data("{}".utf8)) == nil)
     }
+
+    @Test func appErrorsReadAsTheirOwnMessage() {
+        struct Locked: LocalizedError { var errorDescription: String? { "The Keychain is locked." } }
+        #expect(failureReason(Locked()) == "The Keychain is locked.")
+    }
 }

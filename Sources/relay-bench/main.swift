@@ -1,5 +1,5 @@
 import Foundation
-import FoundationModels
+import AnyLanguageModel
 import ModelRelay
 import ModelRelayMLX
 
@@ -29,7 +29,11 @@ if modelID == .appleOnDevice, case .unavailable(let reason) = SystemLanguageMode
     print("Apple on-device model unavailable: \(reason)")
     exit(1)
 }
-let runner = WorkflowRunner(catalog: ModelCatalog().registeringMLXModels())
+var catalog = ModelCatalog()
+#if MLX
+catalog.registerMLXModels()
+#endif
+let runner = WorkflowRunner(catalog: catalog)
 
 let extract = Workflow(name: "Receipt to expense", steps: [
     Step("expense", .extract(instruction: "Extract the expense from this receipt. total is the final amount paid.", fields: [
@@ -43,7 +47,7 @@ let triage = Workflow(name: "Triage", steps: [
 // Warm up: the first call loads the model (and may download MLX weights);
 // that time isn't answer latency, so it's excluded from the results.
 print("Loading \(modelID)…")
-_ = try? await WorkflowRunner(catalog: ModelCatalog().registeringMLXModels(), stepTimeout: .seconds(600))
+_ = try? await WorkflowRunner(catalog: catalog, stepTimeout: .seconds(600))
     .run(triage, input: .text("Warm-up"))
 
 func ms(_ d: Duration) -> Int { Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000) }

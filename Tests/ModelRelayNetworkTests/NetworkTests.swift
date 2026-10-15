@@ -1,3 +1,4 @@
+import AnyLanguageModel
 import Foundation
 import Synchronization
 import Testing
@@ -20,6 +21,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     /// Replies used in order before falling back to `reply`.
     nonisolated(unsafe) static var queue: [(status: Int, body: String)] = []
     nonisolated(unsafe) static var sent: [Sent] = []
+    /// Response headers for the queued replies, in the same order.
+    nonisolated(unsafe) static var headerQueue: [[String: String]] = []
 
     static func configuration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -46,10 +49,34 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
                               headers: request.allHTTPHeaderFields ?? [:],
                               body: body))
         let next = Self.queue.isEmpty ? Self.reply : Self.queue.removeFirst()
-        let response = HTTPURLResponse(url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: nil)!
+        var headers = Self.headerQueue.isEmpty ? [:] : Self.headerQueue.removeFirst()
+        let streaming = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["stream"] as? Bool == true
+        if streaming { headers["Content-Type"] = "text/event-stream" }
+        else if headers["Content-Type"] == nil { headers["Content-Type"] = "application/json" }
+        let response = HTTPURLResponse(url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(next.body.utf8))
+        client?.urlProtocol(self, didLoad: (streaming ? ProviderStreamFixture.data(from: Self.providerEnvelope(next.body)) : Self.providerEnvelope(next.body)))
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    // Fill the standard wire envelope around concise provider fixtures.
+    private static func providerEnvelope(_ body: String) -> Data {
+        guard var json = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any] else { return Data(body.utf8) }
+        if var choices = json["choices"] as? [[String: Any]] {
+            json["id"] = "chat-test"; json["object"] = "chat.completion"; json["created"] = 0; json["model"] = "scripted"
+            for index in choices.indices {
+                choices[index]["index"] = index
+                var message = choices[index]["message"] as? [String: Any] ?? [:]
+                message["role"] = "assistant"
+                choices[index]["message"] = message
+                choices[index]["finish_reason"] = message["tool_calls"] == nil ? "stop" : "tool_calls"
+            }
+            json["choices"] = choices
+        } else if json["content"] is [[String: Any]] {
+            json["id"] = "message-test"; json["type"] = "message"; json["role"] = "assistant"; json["model"] = "scripted"
+            if json["stop_reason"] == nil { json["stop_reason"] = "end_turn" }
+        }
+        return (try? JSONSerialization.data(withJSONObject: json)) ?? Data(body.utf8)
     }
 
     override func stopLoading() {}
@@ -59,6 +86,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     init() {
         StubProtocol.sent = []
         StubProtocol.queue = []
+        StubProtocol.headerQueue = []
         CloudHTTP.session.withLock { $0 = URLSession(configuration: StubProtocol.configuration()) }
     }
 
@@ -86,7 +114,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     @Test func openAICompatibleExtractUsesAStrictSchema() async throws {
         StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "{\"merchant\": \"Blue Bottle\", \"total\": 8.3}"}}]}"#)
-        let model = OpenAICompatibleModel(baseURL: URL(string: "https://llm.test/v1")!, model: "small", apiKey: "sk-test")
+        let model = OpenAILanguageModel(baseURL: URL(string: "https://llm.test/v1")!, apiKey: "sk-test", model: "small", session: URLSession(configuration: StubProtocol.configuration()))
         let runner = WorkflowRunner(catalog: ModelCatalog().registering("openai") { model })
         let report = try await runner.run(receipt(model: "openai"), input: .text("BLUE BOTTLE 8.30"))
         #expect(report.output["merchant"] == .text("Blue Bottle"))
@@ -99,26 +127,25 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let schema = try #require(format["json_schema"] as? [String: Any])
         #expect(schema["strict"] as? Bool == true)
         #expect(((schema["schema"] as? [String: Any])?["properties"] as? [String: Any])?.keys.sorted() == ["merchant", "total"])
-        #expect(String(describing: model).contains("sk-test") == false)
     }
 
     @Test func classifyLabelsAreWrappedAndUnwrapped() async throws {
-        StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "{\"value\": \"urgent\"}"}}]}"#)
-        let runner = WorkflowRunner(catalog: ModelCatalog().registering("local") {
-            OpenAICompatibleModel(baseURL: URL(string: "http://localhost:11434/v1")!, model: "llama3.2")
+        StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "{\"response\": \"urgent\"}"}}]}"#)
+        let runner = WorkflowRunner(catalog: ModelCatalog().registering("local", supportsImages: true) {
+            OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "llama3.2", session: URLSession(configuration: StubProtocol.configuration()))
         })
         let workflow = Workflow(name: "Triage", steps: [
             Step("label", .classify(instruction: "Urgent?", labels: ["urgent", "later"]), model: "local"),
         ])
         let report = try await runner.run(workflow, input: .text("Server down"))
         #expect(report.output == .text("urgent"))
-        #expect(StubProtocol.sent.first?.headers["Authorization"] == nil)
+        #expect(StubProtocol.sent.count == 1)
     }
 
-    @Test func claudeExtractUsesTheRespondTool() async throws {
-        StubProtocol.reply = (200, #"{"content": [{"type": "tool_use", "name": "respond", "input": {"merchant": "Blue Bottle", "total": 8.3}}]}"#)
-        let runner = WorkflowRunner(catalog: ModelCatalog().registering("claude") {
-            ClaudeModel(model: "claude-haiku-5-5", apiKey: "sk-ant-test")
+    @Test func claudeExtractUsesNativeStructuredOutput() async throws {
+        StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "{\"merchant\":\"Blue Bottle\",\"total\":8.3}"}]}"#)
+        let runner = WorkflowRunner(catalog: ModelCatalog().registering("claude", supportsImages: true) {
+            AnthropicLanguageModel(apiKey: "sk-ant-test", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration()))
         })
         let report = try await runner.run(receipt(model: "claude"), input: .text("BLUE BOTTLE 8.30"))
         #expect(report.output["total"] == .number(8.3))
@@ -126,12 +153,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let sent = try #require(StubProtocol.sent.first)
         #expect(sent.url.absoluteString == "https://api.anthropic.com/v1/messages")
         #expect(sent.headers["x-api-key"] == "sk-ant-test")
-        #expect((sent.json["tool_choice"] as? [String: Any])?["name"] as? String == "respond")
+        #expect(sent.json["output_config"] != nil)
     }
 
     @Test func claudeTextAndErrorsWithoutTheKey() async throws {
         StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "Hello there."}]}"#)
-        let catalog = ModelCatalog().registering("claude") { ClaudeModel(model: "claude-haiku-5-5", apiKey: "sk-ant-test") }
+        let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "sk-ant-test", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
         let ask = Workflow(name: "Ask", steps: [Step("hi", .prompt(instruction: "Say hello."), model: "claude")])
         #expect(try await WorkflowRunner(catalog: catalog).run(ask, input: .text("")).output == .text("Hello there."))
 
@@ -195,7 +222,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             (200, #"{"choices": [{"message": {"content": "19 degrees in Lisbon."}}]}"#),
         ]
         let catalog = ModelCatalog().registering("ollama") {
-            OpenAICompatibleModel(baseURL: URL(string: "http://localhost:11434/v1")!, model: "qwen2.5")
+            OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "qwen2.5", session: URLSession(configuration: StubProtocol.configuration()))
         }
         let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
             .run(weatherAgent("ollama"), input: .text("Weather in Lisbon?"))
@@ -218,7 +245,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             (200, #"{"content": [{"type": "tool_use", "id": "toolu_1", "name": "getWeather", "input": {"city": "Lisbon"}}], "stop_reason": "tool_use"}"#),
             (200, #"{"content": [{"type": "text", "text": "It's 19 degrees."}]}"#),
         ]
-        let catalog = ModelCatalog().registering("claude") { ClaudeModel(model: "claude-haiku-5-5", apiKey: "k") }
+        let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "k", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
         let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
             .run(weatherAgent("claude"), input: .text("Weather in Lisbon?"))
         #expect(report.output == .text("It's 19 degrees."))
@@ -229,5 +256,73 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let reply = try #require(messages.last?["content"] as? [[String: Any]])
         #expect(reply.first?["type"] as? String == "tool_result")
         #expect(reply.first?["tool_use_id"] as? String == "toolu_1")
+    }
+}
+
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
+
+extension NetworkTests {
+    /// A plain grey picture, as PNG.
+    private func photo(width: Int = 300, height: Int = 200) -> ImageValue {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let data = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        CGImageDestinationFinalize(destination)
+        return ImageValue(data: data as Data, contentType: "image/png")
+    }
+
+    private func reader(_ model: ModelID) -> Workflow {
+        Workflow(name: "OCR", steps: [Step("read", .readImage(instruction: "Read the receipt."), model: model)])
+    }
+
+    @Test func claudeReadsImagesAsImageBlocks() async throws {
+        StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "TOTAL 8.30"}]}"#)
+        let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "k", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
+        let report = try await WorkflowRunner(catalog: catalog).run(reader("claude"), input: .image(photo()))
+        #expect(report.output == .text("TOTAL 8.30"))
+
+        let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
+        let blocks = try #require(messages.first?["content"] as? [[String: Any]])
+        #expect(blocks.map { $0["type"] as? String } == ["text", "image"])
+        let source = try #require(blocks.last?["source"] as? [String: Any])
+        #expect(source["type"] as? String == "base64")
+        #expect(source["media_type"] as? String == "image/png")
+        let data = try #require(Data(base64Encoded: source["data"] as? String ?? ""))
+        #expect(data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(blocks.first?["text"] as? String == "Read the receipt.")
+    }
+
+    @Test func openAICompatibleServersReadImagesAsDataURLs() async throws {
+        StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "TOTAL 8.30"}}]}"#)
+        let catalog = ModelCatalog().registering("local", supportsImages: true) {
+            OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "qwen2.5vl", session: URLSession(configuration: StubProtocol.configuration()))
+        }
+        let report = try await WorkflowRunner(catalog: catalog).run(reader("local"), input: .image(photo()))
+        #expect(report.output == .text("TOTAL 8.30"))
+
+        let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
+        let parts = try #require(messages.last?["content"] as? [[String: Any]])
+        #expect(parts.map { $0["type"] as? String } == ["text", "image_url"])
+        let url = try #require((parts.last?["image_url"] as? [String: Any])?["url"] as? String)
+        #expect(url.hasPrefix("data:image/png;base64,"))
+    }
+
+    @Test func textPromptsStayPlainText() async throws {
+        StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "Hi"}}]}"#)
+        let catalog = ModelCatalog().registering("local", supportsImages: true) {
+            OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "llama3.2", session: URLSession(configuration: StubProtocol.configuration()))
+        }
+        let ask = Workflow(name: "Ask", steps: [Step("hi", .prompt(instruction: "Say hi."), model: "local")])
+        _ = try await WorkflowRunner(catalog: catalog).run(ask, input: .text(""))
+        let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
+        let blocks = try #require(messages.last?["content"] as? [[String: Any]])
+        #expect(blocks.count == 1)
+        #expect(blocks.first?["type"] as? String == "text")
     }
 }

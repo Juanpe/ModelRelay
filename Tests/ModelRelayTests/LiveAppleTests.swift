@@ -35,4 +35,19 @@ struct LiveAppleTests {
         #expect(report.output["damaged"] == .bool(true))
         #expect(report.output["queue"] == .text("shipping"))
     }
+
+    /// Its first use in a process prepares the model, which can take a
+    /// minute on a Mac; later runs take a fraction of a second.
+    @Test func appleTextRecognitionReadsTheImageOnDevice() async throws {
+        let workflow = Workflow(name: "OCR", steps: [Step("read", .readImage(instruction: ""), model: .appleTextRecognition)])
+        await TextRecognitionModel.prepare()
+        let report = try await WorkflowRunner().run(workflow, input: .image(ImageValue(data: picture("RUNLINE 2026"), contentType: "image/png")))
+        print("LIVE text recognition:", report.output.textValue, "|", report.duration)
+        #expect(report.output.textValue.contains("RUNLINE"))
+        #expect(report.output.textValue.contains("2026"))
+
+        await #expect(throws: RelayError.stepFailed(step: "read", reason: "There's no readable text in the image")) {
+            try await WorkflowRunner().run(workflow, input: .image(ImageValue(data: picture(), contentType: "image/png")))
+        }
+    }
 }

@@ -62,6 +62,7 @@ enum JSONValue: Codable {
         case .bool(let v): self = .bool(v)
         case .list(let v): self = .array(v.map(JSONValue.init))
         case .dictionary(let v): self = .object(v.mapValues(JSONValue.init))
+        case .image(let v): self = .string(v.text ?? "")
         }
     }
 }
@@ -90,6 +91,10 @@ extension JSONEncoder {
         case .prompt, .extract, .classify, .agent, .decide:
             step.model = model
         case .template, .request:
+            break
+        case .readImage:
+            break // Keeps its own model: the override may not see images.
+        case .custom, .useTool:
             break
         }
         return step
@@ -120,7 +125,11 @@ for file in (try? FileManager.default.contentsOfDirectory(atPath: directory)) ??
 }
 let loaded = workflows
 let listenPort = port
-let runner = WorkflowRunner(catalog: ModelCatalog().registeringMLXModels())
+var catalog = ModelCatalog()
+#if MLX
+catalog.registerMLXModels()
+#endif
+let runner = WorkflowRunner(catalog: catalog)
 
 // MARK: - HTTP
 

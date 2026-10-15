@@ -77,9 +77,21 @@ final class PlaygroundModel {
     var phase = Phase.idle
     private var task: Task<Void, Never>?
 
-    let models: [ModelID] = [.appleOnDevice, .applePrivateCloud] + MLXModels.ids.sorted { $0.rawValue < $1.rawValue }
-    // MLX weights download from Hugging Face the first time a model runs.
-    private let runner = WorkflowRunner(catalog: ModelCatalog().registeringMLXModels())
+    let models: [ModelID] = {
+        var ids: [ModelID] = [.appleOnDevice, .applePrivateCloud]
+        #if MLX
+        ids += MLXModels.ids.sorted { $0.rawValue < $1.rawValue }
+        #endif
+        return ids
+    }()
+    private let runner: WorkflowRunner = {
+        var catalog = ModelCatalog()
+        #if MLX
+        // MLX weights download from Hugging Face the first time a model runs.
+        catalog.registerMLXModels()
+        #endif
+        return WorkflowRunner(catalog: catalog)
+    }()
 
     func run() {
         task?.cancel()

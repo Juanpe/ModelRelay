@@ -60,6 +60,9 @@ public struct Step: Codable, Sendable, Hashable {
         /// answering in text. At most `AgentTool.maxCallsPerStep` calls.
         /// `kits` names reusable `ToolKit`s (by id) whose tools are added to
         /// `tools`; the runner is given the kits.
+        /// Each step starts a fresh session, even when its model and tools
+        /// are reused. Earlier results reach it as input values or template
+        /// substitutions, not as conversation history.
         case agent(instruction: String, tools: [AgentTool], kits: [String]? = nil)
         /// Answers typed questions about the text (yes/no, one of, score) in
         /// one go. A `DecisionModel` also gives probabilities; a language model
@@ -75,6 +78,18 @@ public struct Step: Codable, Sendable, Hashable {
         /// Runs the steps concurrently on the same input. The block's result is a
         /// dictionary keyed by step name: this is the "merge".
         case parallel([Step])
+        /// Sends an image (the step's input must be `Value.image`) with the
+        /// instruction to a model that can see images, and returns its text.
+        /// An empty instruction asks for all the text in the image.
+        /// `ModelID.appleTextRecognition` reads it on device without a model.
+        case readImage(instruction: String)
+        /// Trusted Swift code supplied by the developer, never model output.
+        /// Custom bodies are in-memory only and cannot be encoded or decoded.
+        case custom(CustomStepBody)
+        /// Calls one tool of a tool set (by kit id) with arguments built
+        /// from templates, without a model choosing anything. Tools that
+        /// change something need the write policy's permission.
+        case useTool(kit: String, tool: String, arguments: [String: String])
     }
 }
 
@@ -109,4 +124,7 @@ public struct ModelID: Codable, Sendable, Hashable, ExpressibleByStringLiteral, 
 
     public static let appleOnDevice: ModelID = "apple.on-device"
     public static let applePrivateCloud: ModelID = "apple.private-cloud"
+    /// Apple's on-device text recognition (Vision): reads the text in an
+    /// image exactly as written, and nothing else. Only for `readImage` steps.
+    public static let appleTextRecognition: ModelID = "apple.text-recognition"
 }

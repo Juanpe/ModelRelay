@@ -1,5 +1,5 @@
 import Foundation
-import FoundationModels
+import AnyLanguageModel
 
 /// One typed question a decide step asks about its text.
 public struct Question: Codable, Sendable, Hashable {

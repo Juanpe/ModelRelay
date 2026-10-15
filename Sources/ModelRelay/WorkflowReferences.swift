@@ -114,12 +114,14 @@ extension Workflow {
             ([request.url, request.body ?? ""] + request.headers.map(\.value)).map { ($0, true, arguments) }
         }
         switch step.kind {
-        case .prompt(let text), .extract(let text, _), .classify(let text, _), .template(let text):
+        case .prompt(let text), .extract(let text, _), .classify(let text, _), .template(let text),
+             .readImage(let text):
             return [(text, false, false)]
         case .agent(let text, let tools, _):
             return [(text, false, false)] + tools.flatMap { request($0.request, arguments: true) }
         case .request(let value): return request(value, arguments: false)
         case .decide(let questions): return questions.map { ($0.instructions, false, false) }
+        case .useTool(_, _, let arguments): return arguments.values.map { ($0, false, false) }
         default: return []
         }
     }
@@ -158,6 +160,13 @@ extension Workflow {
         case .extract(let text, let fields): copy.kind = .extract(instruction: template(text), fields: fields)
         case .classify(let text, let labels): copy.kind = .classify(instruction: template(text), labels: labels)
         case .template(let text): copy.kind = .template(template(text))
+        case .readImage(let text): copy.kind = .readImage(instruction: template(text))
+        case .useTool(let kit, let tool, let arguments):
+            copy.kind = .useTool(kit: kit, tool: tool, arguments: arguments.mapValues(template))
+        case .custom:
+            // Compiled closures cannot be inspected or rewritten. Only the
+            // step name and explicit input reference above can be renamed.
+            break
         case .request(let value): copy.kind = .request(request(value))
         case .agent(let text, let tools, let kits):
             copy.kind = .agent(instruction: template(text), tools: tools.map { tool in

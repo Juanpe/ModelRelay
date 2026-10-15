@@ -1,4 +1,4 @@
-import FoundationModels
+import AnyLanguageModel
 
 /// One field an extract step must produce. Fields are defined at run time (by
 /// the person building the workflow), so they become a dynamic schema that

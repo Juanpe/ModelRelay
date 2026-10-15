@@ -2,9 +2,11 @@
 /// no expressions, no functions, nothing executed. Unknown names render empty.
 enum Template {
     /// `escape` adapts each substituted value to where it lands (a URL, a JSON
-    /// body); the template's own text is left as written.
+    /// body); the template's own text is left as written. `text` turns a
+    /// value into text: as it reads in a sentence, or as a model reads it.
     static func render(_ template: String, _ resolve: (String) -> Value?,
-                       escape: (String) -> String = { $0 }) -> String {
+                       escape: (String) -> String = { $0 },
+                       text: (Value) -> String = Template.inlineText) -> String {
         var output = ""
         var rest = Substring(template)
         while let open = rest.range(of: "{{") {
@@ -14,7 +16,7 @@ enum Template {
                 return output
             }
             let reference = rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces)
-            output += escape(resolve(reference).map(inlineText) ?? "")
+            output += escape(resolve(reference).map(text) ?? "")
             rest = rest[close.upperBound...]
         }
         return output + rest
@@ -22,7 +24,7 @@ enum Template {
 
     /// A value as it reads inside a sentence: a list of words joined with
     /// commas, everything else as its plain text.
-    private static func inlineText(_ value: Value) -> String {
+    static func inlineText(_ value: Value) -> String {
         if case .list(let items) = value, items.allSatisfy({ if case .list = $0 { false } else if case .dictionary = $0 { false } else { true } }) {
             return items.map(\.textValue).joined(separator: ", ")
         }

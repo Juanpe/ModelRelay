@@ -1,6 +1,6 @@
 import Foundation
 import Synchronization
-import FoundationModels
+import AnyLanguageModel
 
 struct InvalidOutput: Error, CustomStringConvertible {
     var reason: String
@@ -53,17 +53,22 @@ public actor WorkflowRunner {
     private let stepTimeout: Duration
     private let context: RequestContext
     private let toolKits: [String: ToolKit]
+    private let toolServers: (any ToolServerConnector)?
     private let clock = ContinuousClock()
 
     /// `stepTimeout` bounds one model call or request. Small models occasionally
     /// run away; a call that takes longer counts as a failure (and tries the
     /// fallback model, if any). Request steps need `requests`; those that change
-    /// something also need a `writePolicy` that allows them.
+    /// something also need a `writePolicy` that allows them. Custom bodies
+    /// use the same cooperative timeout and run once, without fallback.
+    /// Tool sets with a server need `toolServers`.
     public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30),
                 requests: (any RequestPerformer)? = nil, secrets: (any SecretProvider)? = nil,
-                writePolicy: WritePolicy = .deny, toolKits: [ToolKit] = []) {
+                writePolicy: WritePolicy = .deny, toolKits: [ToolKit] = [],
+                toolServers: (any ToolServerConnector)? = nil) {
         self.catalog = catalog
         self.stepTimeout = stepTimeout
+        self.toolServers = toolServers
         self.toolKits = Dictionary(toolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
@@ -162,6 +167,59 @@ public actor WorkflowRunner {
                                             duration: clock.now - start, skipped: false))
             return value
 
+        case .custom(let body):
+            trace.input = source.textValue
+            let values = CustomStepContext(input: source, workflowInput: scope.input, results: scope.results)
+            let value: Value
+            do {
+                value = try await withTimeout(stepTimeout, message: "it ran longer than \(stepTimeout)") {
+                    try Task.checkCancellation()
+                    return try await body.call(values)
+                }
+            } catch {
+                try Self.rethrowCancellation(error)
+                throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
+            }
+            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
+                                    duration: clock.now - start, skipped: false, input: trace.input))
+            return value
+
+        case .useTool(let kitID, let toolName, let arguments):
+            guard let kit = toolKits[kitID] else {
+                throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
+            }
+            let rendered = arguments.mapValues { Template.render($0, scope.resolve) }
+            let value: Value
+            if kit.server != nil {
+                let connection = try await connect(kit, step: step.name)
+                guard let tool = try await serverTools(kit, connection, step: step.name).first(where: { $0.name == toolName }) else {
+                    throw RelayError.stepFailed(step: step.name, reason: "\(kit.name) has no tool “\(toolName)”")
+                }
+                let typed = ServerArguments.typed(rendered, for: tool)
+                let call = ServerCallDescription.prepared(kit: kit, tool: tool.name, arguments: typed)
+                trace.input = call.description
+                if tool.changesSomething { try await context.authorize(call, step: step.name) }
+                do {
+                    // One attempt only, like a request: the call may have happened.
+                    value = try await withTimeout(stepTimeout) { try await connection.call(tool.name, arguments: typed) }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    throw RelayError.stepFailed(step: step.name, reason: "\(kit.name): \(failureReason(error))")
+                }
+            } else {
+                guard let spec = kit.tools.first(where: { $0.name == toolName }) else {
+                    throw RelayError.stepFailed(step: step.name, reason: "\(kit.name) has no tool “\(toolName)”")
+                }
+                value = try await context.perform(spec.request, step: step.name, trace: trace) { reference in
+                    if reference.hasPrefix("args.") { return rendered[String(reference.dropFirst("args.".count))].map(Value.text) }
+                    return scope.resolve(reference)
+                }
+            }
+            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
+                                    duration: clock.now - start, skipped: false, input: trace.input))
+            return value
+
         case .request(let request):
             let value = try await context.perform(request, step: step.name, trace: trace, resolve: scope.resolve)
             scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
@@ -218,18 +276,28 @@ public actor WorkflowRunner {
         case .agent(_, let ownTools, let kitIDs):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             var specs = ownTools
+            var servers: [(ToolKit, any ToolServerConnection, [ServerTool])] = []
             for id in kitIDs ?? [] {
                 guard let kit = toolKits[id] else {
                     throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(id)” isn't available")
                 }
-                specs += kit.tools
+                if kit.server != nil {
+                    let connection = try await connect(kit, step: step.name)
+                    servers.append((kit, connection, try await serverTools(kit, connection, step: step.name)))
+                } else {
+                    specs += kit.tools
+                }
             }
             let prompt = Self.prompt(for: step.kind, source: source, resolve: scope.resolve)
             trace.input = prompt
             let snapshot = scope
             let log = ToolCallLog(limit: AgentTool.maxCallsPerStep)
-            let tools: [any Tool] = specs.map {
+            var tools: [any Tool] = specs.map {
                 RequestTool(spec: $0, step: step.name, context: context, log: log, resolve: { snapshot.resolve($0) })
+            }
+            for (kit, connection, list) in servers {
+                tools += list.map { ServerToolCall(tool: $0, kit: kit, connection: connection, step: step.name,
+                                                   context: context, log: log) }
             }
             var model = primary
             var usedFallback = false
@@ -239,6 +307,7 @@ public actor WorkflowRunner {
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
             } catch {
+                try Self.rethrowCancellation(error)
                 // A tool may already have changed something: only retry on the
                 // fallback model when no tool was called.
                 guard let fallback = step.fallback, log.calls.isEmpty else {
@@ -249,6 +318,7 @@ public actor WorkflowRunner {
                     model = fallback
                     usedFallback = true
                 } catch {
+                    try Self.rethrowCancellation(error)
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
@@ -261,7 +331,7 @@ public actor WorkflowRunner {
             if let problem = Question.problem(in: questions) {
                 throw RelayError.stepFailed(step: step.name, reason: problem)
             }
-            let text = source.textValue
+            let text = source.modelText
             trace.input = text
             do {
                 let value = try await decide(questions, about: text, model: primary)
@@ -271,6 +341,7 @@ public actor WorkflowRunner {
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
             } catch {
+                try Self.rethrowCancellation(error)
                 guard let fallback = step.fallback else {
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
@@ -280,6 +351,40 @@ public actor WorkflowRunner {
                                             duration: clock.now - start, skipped: false, input: text))
                     return value
                 } catch {
+                    try Self.rethrowCancellation(error)
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
+                }
+            }
+
+        case .readImage(let instruction):
+            guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
+            guard case .image(let image) = source else {
+                throw RelayError.stepFailed(step: step.name, reason: "it needs an image, and got \(source.kindName)")
+            }
+            let text = Template.render(instruction.isEmpty ? ImageReading.defaultInstruction : instruction, scope.resolve,
+                                       text: \.modelText)
+            // The picture itself is never kept: the trace says what it was.
+            let input = "\(text)\n\n[\(ImageReading.describe(image))]"
+            trace.input = input
+            do {
+                let value = try await read(image, instruction: text, model: primary)
+                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
+                                        duration: clock.now - start, skipped: false, input: input))
+                return value
+            } catch let error as RelayError where error == .unknownModel(primary) {
+                throw error
+            } catch {
+                try Self.rethrowCancellation(error)
+                guard let fallback = step.fallback else {
+                    throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
+                }
+                do {
+                    let value = try await read(image, instruction: text, model: fallback)
+                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
+                                            duration: clock.now - start, skipped: false, input: input))
+                    return value
+                } catch {
+                    try Self.rethrowCancellation(error)
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
@@ -296,6 +401,7 @@ public actor WorkflowRunner {
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
             } catch {
+                try Self.rethrowCancellation(error)
                 guard let fallback = step.fallback else {
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
@@ -306,10 +412,17 @@ public actor WorkflowRunner {
                                             duration: clock.now - start, skipped: false, input: prompt))
                     return value
                 } catch {
+                    try Self.rethrowCancellation(error)
                     throw RelayError.stepFailed(step: step.name, reason: failureReason(error))
                 }
             }
         }
+    }
+
+    /// Cancellation is control flow, never a model failure to retry. Some
+    /// providers wrap it, so also check the calling task's cancellation state.
+    private static func rethrowCancellation(_ error: any Error) throws {
+        if error is CancellationError || Task.isCancelled { throw CancellationError() }
     }
 
     private static func flatten(_ step: Step) -> [Step] {
@@ -327,9 +440,10 @@ public actor WorkflowRunner {
              .agent(let instruction, _, _): instruction
         default: ""
         }
-        let rendered = Template.render(instruction, resolve)
-        // The source text is data, clearly separated from the instruction.
-        return instruction.contains("{{") ? rendered : "\(rendered)\n\nInput:\n\(source.textValue)"
+        let rendered = Template.render(instruction, resolve, text: \.modelText)
+        // The source is data, clearly separated from the instruction. Lists
+        // and fields reach the model as JSON.
+        return instruction.contains("{{") ? rendered : "\(rendered)\n\nInput:\n\(source.modelText)"
     }
 
     private func decide(_ questions: [Question], about text: String, model id: ModelID) async throws -> Value {
@@ -340,6 +454,54 @@ public actor WorkflowRunner {
         return Answer.value(try await withTimeout(stepTimeout) {
             try await DecisionByLanguageModel.decide(questions, about: text, model: model)
         })
+    }
+
+    /// Opens a connection to a tool set's server.
+    private func connect(_ kit: ToolKit, step: String) async throws -> any ToolServerConnection {
+        guard let toolServers else { throw RelayError.stepFailed(step: step, reason: "tool servers can't be reached here") }
+        do {
+            return try await withTimeout(stepTimeout) { try await toolServers.connect(to: kit) }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw RelayError.stepFailed(step: step, reason: "\(kit.name): \(failureReason(error))")
+        }
+    }
+
+    private func serverTools(_ kit: ToolKit, _ connection: any ToolServerConnection, step: String) async throws -> [ServerTool] {
+        do {
+            return try await withTimeout(stepTimeout) { try await connection.tools() }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw RelayError.stepFailed(step: step, reason: "\(kit.name): \(failureReason(error))")
+        }
+    }
+
+    /// Shows the image and the instruction to a model that can see images.
+    private func read(_ image: ImageValue, instruction: String, model id: ModelID) async throws -> Value {
+        if try await catalog.decisionModel(id) != nil {
+            throw InvalidOutput(reason: "\(id) answers questions; it can't read images")
+        }
+        let model = try await catalog.model(id)
+        guard catalog.supportsImages(id) else {
+            throw InvalidOutput(reason: "\(id) can't read images. Choose a model that can see them")
+        }
+        let work: @Sendable () async throws -> Value = {
+            guard let picture = ImageCoding.picture(from: image.data) else {
+                throw InvalidOutput(reason: "The image couldn't be opened")
+            }
+            let session = LanguageModelSession(model: model)
+            let response = try await session.respond {
+                instruction
+                Attachment(picture)
+            }
+            return .text(response.content)
+        }
+        // Text recognition can't run away, but its first use in an app
+        // prepares its model, which can take a minute on a Mac.
+        if model is TextRecognitionModel { return try await work() }
+        return try await withTimeout(stepTimeout, work)
     }
 
     private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID,
@@ -380,6 +542,15 @@ public actor WorkflowRunner {
             }
             return .text(label)
         default:
+            if !tools.isEmpty {
+                // Native streaming providers own the complete tool loop.
+                // In particular Anthropic's non-streaming API is one round.
+                var text: String?
+                for try await snapshot in session.streamResponse(to: prompt) { text = snapshot.content }
+                try Task.checkCancellation()
+                guard let text else { throw InvalidOutput(reason: "The model returned no answer") }
+                return .text(text)
+            }
             return .text(try await session.respond(to: prompt).content)
         }
     }
@@ -393,5 +564,41 @@ final class StepTrace: Sendable {
     var input: String? {
         get { value.withLock { $0 } }
         set { value.withLock { $0 = newValue } }
+    }
+}
+
+/// Turns a Use a Tool step's rendered text into the types a server tool
+/// asks for: numbers, yes/no, lists. Empty optional arguments are left out.
+enum ServerArguments {
+    static func typed(_ rendered: [String: String], for tool: ServerTool) -> [String: Value] {
+        var values: [String: Value] = [:]
+        for (name, text) in rendered {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty, !tool.required.contains(name) { continue }
+            let kind = tool.parameters.first { $0.name == name }?.kind ?? .text
+            values[name] = value(trimmed, as: kind)
+        }
+        return values
+    }
+
+    private static func value(_ text: String, as kind: Field.Kind) -> Value {
+        switch kind {
+        case .number: return Double(text).map(Value.number) ?? .text(text)
+        case .bool:
+            switch text.lowercased() {
+            case "true", "yes", "1": return .bool(true)
+            case "false", "no", "0": return .bool(false)
+            default: return .text(text)
+            }
+        case .list(let item):
+            if let data = text.data(using: .utf8), let parsed = Value(json: data), case .list = parsed { return parsed }
+            return .list(text.split(whereSeparator: \.isNewline).map { value(String($0).trimmingCharacters(in: .whitespaces), as: item) })
+        case .text, .choice:
+            // A JSON object or list written into a text field is sent as one.
+            if text.hasPrefix("{") || text.hasPrefix("["), let data = text.data(using: .utf8), let parsed = Value(json: data) {
+                return parsed
+            }
+            return .text(text)
+        }
     }
 }
