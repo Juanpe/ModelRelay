@@ -16,6 +16,47 @@ workflow orchestration, typed values, permissions, fallback and tracing,
 not UI, accounts or persistence. This package still targets Apple OS 27;
 provider independence is not a claim of Linux or older-OS support.
 
+## What can you build?
+
+ModelRelay can power a feature inside an ordinary app. Your users do not
+need to see a workflow editor: you define the process in Swift, and your
+app supplies its interface, data access and approval flow.
+
+### A customer-support inbox
+
+Turn an incoming message into a suggested action and a draft reply:
+
+1. Extract the topic, order number and requested action into typed fields.
+2. Use a small model or a decision model to classify urgency and choose a
+   workflow branch: billing, delivery or a general question.
+3. Let a tool-enabled agent look up the relevant order or knowledge-base
+   information through host-configured HTTP or MCP tools.
+4. Pass that information and the original message explicitly to another
+   model step to draft a reply. It can use a different provider from triage.
+5. Show the draft in the app. If the workflow sends it, use a write operation
+   guarded by a host-supplied approval policy.
+
+ModelRelay coordinates the branches, data handoff, tools and step records.
+A failed model step can try its configured fallback once; a failure after
+a tool call does not replay that tool on another model.
+
+### A receipt-to-expense assistant
+
+Turn a photographed receipt into a reviewed expense:
+
+1. Read the image with on-device text recognition or a vision-capable model.
+2. Extract the merchant, date, total and tax amounts into typed fields.
+3. Classify the expense using a model chosen for that task.
+4. Use a compiled `Step.custom` body to validate totals and apply the app's
+   business rules, returning validation results as ordinary values.
+5. Show the proposed expense for review, then submit it through an approved
+   HTTP request or tool call.
+
+The app owns image capture, storage and the review UI. ModelRelay connects
+the model steps, deterministic Swift code and submission policy. Custom
+bodies are trusted host code, not sandboxed by the write policy, and make
+their containing workflow in-memory only.
+
 ## Installation
 
 Add this repository once with Swift Package Manager, then select only the
