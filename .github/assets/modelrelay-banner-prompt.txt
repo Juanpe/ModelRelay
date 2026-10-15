@@ -1,0 +1,16 @@
+Use case: logo-brand
+Asset type: a production-ready wide GitHub README banner for the open-source Swift package ModelRelay. Landscape aspect ratio 3:1, approximately 1800 x 600, not a screenshot or mockup.
+
+Project context: ModelRelay composes small language-model steps into workflows in Swift using Apple's FoundationModels, choosing different models for different steps. It supports agents, tools, typed outputs, branching and parallel work. The logo should express a clean relay or handoff between model steps. It is the engine behind an app, not the app itself.
+
+Primary request: create an original logo mark AND a polished wordmark together in one minimal banner. A single balanced centered horizontal brand lockup: compact distinctive logo at the left, the name to its right, and the tagline underneath the name. Large generous white margins all around, text and symbol occupy the middle half to two-thirds of the canvas, absolutely no clipping.
+
+Logo: a very simple strong geometric relay mark made from two interlocking routed strokes with softly rounded corners, suggesting an abstract M and the handoff from one stage to another. Use one solid indigo stroke and one solid warm orange stroke; optional small circular terminals must be integral to the geometry. The mark should look designed, ownable and recognizable at small sizes, not like a random network diagram. Flat solid colors only. No arrows all over the image, no intricate circuits, no brain, no robot, no lightning bolt, no generic AI sparkle. Do not use the Runline branching-circle tree logo; ModelRelay gets its own distinct logo.
+
+Background: pure solid white. Wordmark: very large dark charcoal modern sans serif, semibold, precise kerning; 'ModelRelay' as one word, capital M and R. Tagline: substantially smaller neutral slate text, readable when embedded in a GitHub README.
+Exact text, verbatim:
+'ModelRelay'
+'Composable AI workflows for Swift'
+
+Style: extremely restrained developer-tool branding, completely flat vector-like precision, no gradients, no depth, no shadows, no glass, no texture, no glow, no 3D. Indigo and orange ONLY for the symbol; charcoal for name; slate for tagline. No decorative background motifs or grids, no border, no app-icon rounded-square container, no provider logos or badges, no URLs, no secondary labels, no watermark, no Swift bird.
+Output is the finished banner itself, not a presentation of alternatives.
