@@ -1,6 +1,6 @@
 # ModelRelay
 
-Open-source Swift package (Apache 2.0) that runs chains of small
+Open-source Swift package (MIT) that runs chains of small
 language-model steps on top of FoundationModels. The Runline app (private,
 sibling repo) is its first client; nothing app-specific belongs here.
 

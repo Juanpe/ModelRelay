@@ -1,3 +1,5 @@
+![ModelRelay — Composable AI workflows for Swift](.github/assets/modelrelay-banner.png)
+
 # ModelRelay
 
 Chain small language-model steps — prompt, extract, classify, branch, run in
@@ -139,4 +141,4 @@ Xcode 27 (Swift 6.4), iOS / macOS / visionOS 27. `ModelRelayMLX` also needs Xcod
 
 ## License
 
-Apache 2.0. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
