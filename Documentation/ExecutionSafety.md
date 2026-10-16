@@ -1,106 +1,103 @@
-# Validation, failures, events and execution limits
+# 🔒 Execution safety
 
-These features apply to ordinary `run` and recoverable `start`/`resume`.
-They do not introduce another inference runtime, storage backend or UI layer.
+[← README](../README.md) · [Context and policies](ContextAndPolicies.md) · [Recovery](Recovery.md)
 
-## Validation before execution
+Validate first, keep useful errors, observe progress and cap the work.
+The same controls apply to `run`, `start` and `resume`.
 
-`await executor.validate(workflow)` returns `[WorkflowValidationIssue]` without
-invoking model factories, requesting credentials or discovering remote tools.
-Use it for editor/CLI diagnostics. Execution entry points automatically reject
-invalid definitions, so calling it yourself is optional.
+[✅ Validation](#validation-before-execution) · [🩺 Errors](#structured-failures-and-retained-causes) · [📡 Events](#metadata-only-execution-events) · [⏱ Limits](#global-limits-and-usage)
 
-Checks cover schema version, unique/unreserved step names, available references,
-explicit output, registered models (including fallback), compatible model
-capabilities, field/label/question schemas and locally configured tool names.
-Every branch is validated, including branches that will not be selected.
-A compatible fallback is allowed when the primary lacks a capability.
-`WorkflowValidationError.issues` holds aggregate diagnostics; context/approval
-guards also retain their dedicated `RelayError`/`RecoveryError` cases.
+<a name="validation-before-execution"></a>
 
-Dynamic HTTP/MCP/custom response fields, remote tool discovery, model readiness
-and actual credentials cannot be proven from the definition. Missing fields
-are checked at execution before substituting/sending them; they no longer
-silently become empty strings or JSON null. Use explicit `Value.null` for null.
-An invalid explicit `Workflow.output` never silently returns the last result.
-Models can still return unexpected values, and custom code is not inspected.
+## ✅ Catch invalid definitions early
 
-## Structured failures and retained causes
+`await executor.validate(workflow)` returns `[WorkflowValidationIssue]`
+without loading models, fetching credentials or discovering MCP tools.
+Execution validates automatically; calling it yourself is optional.
 
-Operational failures use `RelayError.operationFailed(step:failure:)`:
+| Checked before work | Checked during execution |
+| --- | --- |
+| Schema, unique/unreserved names, references and explicit output | Dynamic response fields |
+| Registered models/fallbacks and capabilities | Model readiness and credentials |
+| Field, label and question schemas; local tool names | Remote tool schemas and returned values |
+
+Every branch is checked, even if it will not run. A compatible fallback can
+cover a primary's missing capability; an unknown model ID is a configuration error.
+
+Invalid definitions throw `WorkflowValidationError` with aggregate `issues`.
+Context/approval guards retain their dedicated `RelayError`/`RecoveryError` cases.
+Missing dynamic fields fail before substitution or dispatch; use explicit
+`Value.null` for null. Invalid output never silently selects another result.
+Custom code is not inspected.
+
+<a name="structured-failures-and-retained-causes"></a>
+
+## 🩺 Keep the original cause
 
 ```swift
 do {
     _ = try await executor.run(workflow, input: input)
 } catch RelayError.operationFailed(let step, let failure) {
-    switch failure.info.category {
-    case .authenticationRequired:
-        // The host can initiate its own sign-in flow. Do not replay prior writes.
-        break
-    case .permissionDenied:
-        break
-    default:
-        print(step, failure.info.message)
-    }
-    // Explicit, in-memory access for typed handling:
-    // failure.rootCause as? MCPError / CloudModelError / HTTPResponseFailure
+    print(step, failure.info.category, failure.info.message)
 }
 ```
 
-`WorkflowFailureInfo` is a serializable summary with a category, message and
-`outcomeUncertain`. `WorkflowOperationFailure.underlyingError` retains the cause;
-`rootCause` unwraps native tool/executor wrappers. Raw causes are **not Codable**
-and never enter checkpoints or execution events. Failure equality compares
-summary information, not identity of arbitrary underlying errors.
+| API | Use it for |
+| --- | --- |
+| `failure.info` | Serializable category, message and `outcomeUncertain` |
+| `failure.underlyingError` | Original in-memory error |
+| `failure.rootCause` | Cause with native tool/executor wrappers unwrapped |
+| `WorkflowFailureClassifiable` | Categories for your own integration errors |
+| `HTTPResponseFailure.status` | Typed HTTP request status |
 
-HTTP request failures expose `HTTPResponseFailure.status`; MCP and specialized
-decision integrations classify their own typed errors. Host integrations can
-conform errors to `WorkflowFailureClassifiable`. Native generation errors are
-classified where their public types allow it. Some AnyLanguageModel 1.0 HTTP
-errors have no public typed status; they remain `.unknown`, not guessed from
-message text. The original cause is still retained.
+MCP and decision integrations classify their own errors. Public native
+generation errors are classified too; upstream HTTP errors without a public
+typed status remain `.unknown`, rather than guessing from message text.
+Failure equality compares summaries, not raw error identity.
 
-Configured request credentials, including URL-encoded/JSON-escaped forms, are
-redacted from request descriptions and failure summaries. Other provider/host
-messages may contain sensitive data; summaries/`StepRecord`s are not anonymous
-telemetry. Raw `rootCause` can contain a server-echoed credential: only inspect
-it deliberately, never dump it into logs or persistence.
+> ⚠️ Raw causes are not Codable and never enter events/checkpoints.
+> They may contain server-echoed secrets. Inspect them deliberately; do not
+> dump them into logs. Summaries and step records can still contain user data.
 
-Dispatched writes are marked uncertain on failure, including an agent that
-successfully calls a write tool and then fails to produce its final answer.
-Custom bodies are also conservatively treated as potentially effectful.
-Cancellation, policy denials and exhausted limits remain control flow, not a
-reason to invoke a fallback. A cancellation/deadline can interrupt a write too;
-absence of an operational failure wrapper does not prove nothing happened.
+Configured request credentials, including URL/JSON-escaped forms, are
+redacted from descriptions and summaries. Arbitrary provider output is not
+automatically safe telemetry.
 
-## Metadata-only execution events
+A dispatched write is uncertain on failure, including when an agent writes
+successfully but fails to answer afterward. Custom bodies are conservatively
+effectful. Cancellation, policy denials and exhausted limits do not trigger
+fallback; a timeout or cancellation also does not prove a write never happened.
 
-Pass `onEvent:` to `run`, `start` or `resume`. `onStep:` remains available and
-continues to expose full records, including values/input when present.
+<a name="metadata-only-execution-events"></a>
 
-Events cover execution/step/model/tool lifecycle, fallback selection, approval,
-successful checkpoint saves and exhausted limits. They contain IDs, declared
-step/model/tool names, a failure category or checkpoint generation where relevant.
-There are **no prompts, results, arguments, URLs, raw errors or credentials** in
-the event type. Names are host-defined and can themselves be sensitive.
+## 📡 Observe without copying payloads
 
-Callbacks are synchronous, `@Sendable`, serialized in sequence order within an
-invocation and not main-actor isolated. Keep them short; dispatch UI work to
-your own actor. Blocking observers also delay execution/cancellation. Their
-retained references are released at completion, failure or pause.
+Pass `onEvent:` for lifecycle metadata; use `onStep:` for full step records.
 
-`executionID` correlates one logical run; a new resume has a new `invocationID`
-and restarts `sequence`. Correlate all three rather than expecting a globally
-durable sequence. Validation rejection occurs before execution begins and
-therefore does not emit execution events.
+| Events contain | Events do not contain |
+| --- | --- |
+| Execution/invocation IDs and sequence | Prompts or results |
+| Declared step/model/tool names | Arguments or URLs |
+| Failure category, checkpoint generation, limit | Raw errors or credentials |
 
-`checkpointSaved` is emitted **after** a successful durable store callback.
-`onStep` completion still occurs before that save. Events are not a durable
-event journal: a process can die after commit but before notification. A store
-can commit and lose its acknowledgement; reload its latest checkpoint.
-This is a callback API, not token streaming or a background execution service.
+Events cover execution, steps, models, tools, fallback, approval, successful
+checkpoint saves and exhausted limits. Host-defined names can still be sensitive.
 
-## Global limits and usage
+- Callbacks are synchronous, serialized, `@Sendable` and not main-actor isolated.
+  Keep them short; dispatch UI work yourself. Blocking observers delay cancellation.
+- References are released on completion, failure or pause.
+- `executionID` survives resume; `invocationID` changes and `sequence` restarts.
+  Validation rejection happens before lifecycle events begin.
+- `onStep` fires before the post-step save. `checkpointSaved` fires after
+  successful store acknowledgement.
+
+> 📣 Events are not token streaming or a durable journal. A process can die
+> after commit but before notification. If a save fails, reload the store:
+> it may have committed without returning an acknowledgement.
+
+<a name="global-limits-and-usage"></a>
+
+## ⏱ Bound the work
 
 ```swift
 let executor = WorkflowExecutor(limits: .init(
@@ -114,49 +111,43 @@ let report = try await executor.run(workflow, input: input,
 print(report.usage.modelCalls, report.usage.toolCalls)
 ```
 
-Defaults are unlimited. Counts/duration may be zero; concurrency must be positive.
-Negative values/zero concurrency throw `RelayError.invalidLimits` before work.
-Per-invocation `limits:` can narrow the executor's ceiling, never expand it.
+| Limit | Counts or bounds | Does not cover |
+| --- | --- | --- |
+| `maxModelCalls` | Native session/decision attempts, fallback and factory preparation | Hidden provider HTTP/continuation rounds |
+| `maxToolCalls` | Admitted HTTP/MCP/direct-request attempts, including preparation or write-approval failures | Policy-denied calls, discovery, auth or listing |
+| `maxConcurrentSteps` | Leaf bodies across nested parallel blocks; blocks hold no slot | Parallel tool calls inside one native agent response |
+| `maxDuration` | Active invocation time, including preparation, requests, callbacks and store operations | Human review between invocations |
 
-- `maxModelCalls` counts executor-mediated native session/decision attempts,
-  including fallback and factory preparation. It does **not** count each opaque
-  provider-internal HTTP/tool-continuation round inside a native response.
-- `maxToolCalls` counts attempts admitted to HTTP/MCP tools and direct request
-  steps, including attempts subsequently denied by write approval or failing
-  preparation. Policy-denied calls are rejected first. Discovery/auth/listing
-  requests are not tool invocations and are not charged as tool calls.
-- `maxConcurrentSteps` limits leaf-step bodies across nested parallel blocks.
-  Blocks hold no slot, avoiding nested deadlock. It does not separately limit
-  parallel tool calls a native provider may make inside a single agent step.
-- `maxDuration` bounds active invocation time, including provider preparation,
-  requests, callbacks and store operations, using cooperative cancellation.
-  Custom code/providers/stores must honor cancellation; nothing forcibly kills
-  a blocking closure or extends OS deadlines. It is not a CPU/billing quota.
+Defaults are unlimited. Counts/duration may be zero; concurrency must be
+positive. Invalid values throw `RelayError.invalidLimits` before work.
+Call-level limits only narrow the executor's ceiling.
 
-Reservations are atomic across parallel branches. Reaching a limit throws
-`RelayError.limitExceeded`; it never activates model fallback. Independent
-executions have independent counters, even on the same executor.
+Reservations are atomic across branches. Independent executions have
+independent counters. Reaching a limit throws `RelayError.limitExceeded`,
+never fallback. `WorkflowExecutionUsage` reports attempts, not tokens or money.
 
-Recoverable checkpoints (schema **2**) retain effective limits, confirmed call
-counters and accumulated active duration. Resume can only narrow those limits;
-review time between invocations is excluded. Narrowing while still awaiting
-approval saves a new generation, invalidating stale approval decisions.
-Earlier development snapshots lacking limit/usage state are not migrated.
+### ⏸ Budgets survive resume
 
-The live deadline includes store callbacks, but a persisted duration can only
-account through the snapshot taken **before** its own commit. That commit and
-any work after the last successful snapshot cannot be measured exactly after
-a process dies. This is not a hard cross-process wall-clock/billing quota;
-hosts needing one must maintain authoritative timing/reservations externally.
+Schema 2 checkpoints retain limits, confirmed counters and accumulated
+active duration. Resume can only narrow them. Tightening limits while awaiting
+approval saves a new generation, invalidating older decisions. Earlier
+development checkpoint shapes are not migrated.
 
-An interrupted checkpoint is never automatically replayed, even if a limit
-caused the interruption. External leaf reconciliation accounts a verified
-request/tool as one attempt. For a duration-limited execution, the host must
-provide `elapsed:` for the interrupted attempt to `confirmCompletion`; silently
-resetting lost execution time would bypass the limit. Measure/estimate it
-conservatively only after stopping/fencing the old worker. In an unlimited run,
-omitting it leaves unconfirmed elapsed time outside the reported duration.
+### ⚠️ A deadline is cooperative, not a billing meter
 
-`WorkflowExecutionUsage` reports attempts, **not tokens or money**. There is no
-provider-independent token/cost quota, pricing catalog, automatic context
-compaction, scheduler, persistent event store or resource sandbox here.
+Providers, custom bodies and stores must honor cancellation; a blocking
+closure cannot be forcibly stopped, and OS deadlines still apply.
+
+The live deadline includes store callbacks. A stored duration only reaches
+the snapshot taken **before its own commit**: that commit and unsaved work
+cannot be timed exactly after process death. Keep authoritative timing and
+reservations outside the SDK if you need a hard cross-process quota.
+
+For interrupted leaf reconciliation, stop/fence the old worker first.
+`confirmCompletion` counts a verified request/tool as one attempt and
+requires `elapsed:` when duration-limited. Without a duration limit, omitting
+it leaves unconfirmed time out of the report. Measure or conservatively
+estimate it; never reset consumed time to bypass a limit.
+
+Interrupted work is not automatically replayed, including limit failures.
+See [recovery](Recovery.md) before deciding what may run again.

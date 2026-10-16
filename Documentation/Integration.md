@@ -1,163 +1,96 @@
-# Integrating ModelRelay
+# 🔌 Integrating ModelRelay
 
-ModelRelay is an SDK for Apple-platform clients: a command-line tool, service,
-test target or application can use the same workflow engine. No particular
-client application's identity or infrastructure is required.
+[← README](../README.md) · [Usage recipes](Usage.md) · [Context](ContextAndPolicies.md)
 
-## Ownership and entry points
+Bring your app's data, models and permissions. ModelRelay connects the steps;
+you keep the interface, accounts and storage.
 
-The host builds a `Workflow`, supplies a `Value`, and calls
-`WorkflowExecutor.run` with optional policy, limits and observers. The executor returns a
-`WorkflowExecutionReport` or throws an error. Declarative workflows, steps
-and fields are `Codable` data; creating them never calls a model or tool.
-Developer-supplied `Step.custom` bodies run
-only during execution, and make their containing workflow definition
-non-serializable. Hosts can rebuild it in Swift and restore separate
-recoverable execution state.
+[🧩 Wiring](#ownership-and-entry-points) · [📡 Progress](#validation-concurrency-and-failures) · [🔑 MCP and OAuth](#mcp-and-oauth)
 
-The core owns execution order, value substitution, branching, fallback and
-step records. The host chooses these integrations:
+<a name="ownership-and-entry-points"></a>
 
-| Contract | Host responsibility | Optional implementation |
+## 🧩 Plug in what you need
+
+Build a `Workflow`, pass a `Value`, then call `WorkflowExecutor.run`.
+You receive a `WorkflowExecutionReport` or a typed error.
+
+| Integration | You supply | Optional implementation |
 | --- | --- | --- |
-| `ModelCatalog` factory | Choose a native AnyLanguageModel and manage resources | AnyLanguageModel providers; `ModelRelayMLX` presets |
-| `RequestPerformer` | Send prepared HTTP requests | `ModelRelayHTTP` |
-| `SecretProvider` | Retrieve request credentials without putting them in workflow data | Host-owned secure storage |
-| `WritePolicy` | Deny, allow or ask before operations that can change something | Host-supplied decision closure |
-| `ToolServerConnector` | Connect to remote tools | `ModelRelayMCP` |
-| `Step.custom` body | Execute trusted developer Swift code | Inline async throwing closure |
-| `WorkflowExecutionCheckpointStore` | Atomically persist trusted checkpoints with generation CAS | Host-owned durable storage |
+| `ModelCatalog` | Native model factories and resource ownership | AnyLanguageModel providers / MLX presets |
+| `RequestPerformer` | HTTP transport | `ModelRelayHTTP` |
+| `SecretProvider` | Request credentials from secure storage | Your storage |
+| `WritePolicy` | Deny, allow or ask before writes | Your decision closure |
+| `ToolServerConnector` | Remote tool access | `ModelRelayMCP` |
+| `Step.custom` | Trusted, compiled Swift logic | Your async body |
+| `WorkflowExecutionCheckpointStore` | Atomic, durable generation-based saves | Your database/store |
 
-No SwiftUI, App Intents, browser, Keychain or persistence implementation is
-required by the core. Model-provider independence does not mean Linux or
-older-OS support: this package still requires Apple OS 27. AnyLanguageModel
-owns the single native inference/session runtime, including Apple integrations.
+Declarative workflows are Codable; creating one runs no model or tool.
+Custom bodies make the definition non-serializable. Rebuild it in Swift and
+restore a separate execution checkpoint when needed.
 
-## Values, sessions and model resources
+AnyLanguageModel owns inference and native sessions. ModelRelay does not
+require SwiftUI, App Intents, a browser or Keychain. Platform requirements
+and optional products are listed in the [README](../README.md#installation).
 
-These are three different lifetimes:
+<a name="values-sessions-and-model-resources"></a>
 
-1. **Workflow values** exist for one call to `run`. Steps share selected
-   results through names and templates. By default, the next step reads the
-   previous result. Separate runs do not share that state.
-2. **Conversations** use native AnyLanguageModel sessions. They are isolated
-   by default; `withContext(.conversation("name"))` reuses a session for that
-   name and model ID within one run. A different model/fallback has separate
-   history. `withContext(.handoff(["draft"]))` instead passes selected values
-   into a fresh session, never copying raw provider transcripts.
-3. **Model resources** are resolved once per ID and active invocation, with concurrent
-   factory loads coalesced. ModelRelay releases its references when the run
-   finishes. The provider still controls weight/KV-cache lifetime. Return a
-   shared backend if resource reuse across runs is appropriate. A resumed
-   invocation rebuilds its resource cache lazily, not its confirmed step values.
+## 🧠 Be explicit about shared state
 
-Factories are `@Sendable`. Separate runs, including overlapping calls on one
-executor, own independent caches and conversations. Shared initialization
-across runs belongs to the host/provider. Cancelling one waiting step does
-not cancel an in-flight load while another step still needs it.
+| Share… | Use… |
+| --- | --- |
+| A completed value | `input:` references or `{{step.field}}` |
+| Native history within one execution | `.conversation("name")` with the same model ID |
+| Selected results with a fresh model | `.handoff(["draft", "input"])` |
+| Backend resources across executions | A host/provider-owned shared backend |
 
-Each conversation step rebinds tools to its own permission policy, call log
-and value snapshot using native dynamic instructions. Parallel branches may
-use different conversations, but sharing one name/model is rejected before
-any work runs. Recoverable `start`/`resume` executions can restore explicit
-histories within the same logical run. There is no global persistent agent
-memory, context-window budgeting or MCP connection pool.
+Separate executions do not share conversations or factory caches.
+A resume restores confirmed values/history but reloads resources lazily.
+There is no built-in cross-run memory, compaction or MCP pool.
+[Context and resource lifetimes →](ContextAndPolicies.md)
 
-See [ContextAndPolicies](ContextAndPolicies.md) for execution restrictions,
-conservative privacy propagation and the host trust boundary.
+<a name="recovery-and-human-approval"></a>
 
-## Recovery and human approval
+## ⏸ Pause for a person
 
-Use `start`/`resume` with a host-provided `WorkflowExecutionCheckpointStore` to save execution
-state between top-level steps. A `requiringApproval` gate returns a checkpoint
-instead of suspending a task. A new executor can restore values, privacy labels,
-records and native conversation history; it recreates models/connections lazily.
-The host owns storage, encryption, account binding, scheduling and review UI.
+Use `start` / `resume` and a host-owned checkpoint store for
+`requiringApproval` gates. Gates pause before a top-level step or block;
+they do not keep a task suspended.
 
-The store must use atomic durable compare-and-swap on `executionID` and `generation`;
-an unconditional overwrite does not satisfy the protocol. Every operation is
-claimed before work. A completed step is not replayed; a `running` checkpoint
-is ambiguous and cannot be resumed automatically. After independent external
-verification, `confirmCompletion` can record a leaf operation's result without
-invoking it. A block/agent cannot be reconstructed from just one result.
+> 📣 The store needs durable compare-and-swap, not unconditional saves.
+> Interrupted writes must be reconciled, never blindly replayed.
+> [Recovery contract →](Recovery.md)
 
-Keep workflow IDs stable and change the host revision when custom code,
-model configuration, account binding or executable dependencies change. Approving
-a gate never bypasses current write/data policy. This does not guarantee
-exactly-once remote writes or extend OS execution time. See [Recovery](Recovery.md)
-for the API, sensitive-data contract, failure cases and supported boundaries.
+<a name="explicit-handoff-between-agents"></a>
 
-### Explicit handoff between agents
+Agent handoff examples live in [context](ContextAndPolicies.md#three-context-modes).
+Pass selected values, not another provider's opaque transcript.
 
-This workflow lets a second model see the original question and the first
-agent's answer without sharing a mutable chat session:
+<a name="validation-concurrency-and-failures"></a>
 
-```swift
-import ModelRelay
+## 📡 Validate and observe
 
-let workflow = Workflow("Draft and review", output: "review") {
-    Step.agent("draft", "Write a concise answer.", model: "writer")
-    Step.agent("review", """
-        Review the draft and return an improved answer.
+Execution validates definitions automatically. Use `validate` for diagnostics
+before work; credentials, model readiness and remote schemas remain runtime checks.
 
-        Original question:
-        {{input}}
+- Parallel children read the same snapshot. Results merge in declaration
+  order; `onStep` callbacks may arrive in completion order.
+- Callbacks are `@Sendable`, not UI-actor code. Keep full records yourself
+  when you need partial progress after a thrown run.
+- Step records may contain user input/output. `onEvent` carries metadata instead.
+- There is one fallback per model step, no automatic request/tool replay,
+  and no fallback after a host tool attempt.
 
-        Draft:
-        {{draft}}
-        """, model: "reviewer")
-}
-```
+`stepTimeout` bounds individual operations. Global limits add active duration,
+attempt budgets and leaf concurrency. Cancellation is cooperative; your
+background job or endpoint still owns its lifetime.
+[Errors, events and exact counting →](ExecutionSafety.md)
 
-Register `writer` and `reviewer` in the catalog. They may refer to the same
-model, or different providers. Adding `kits: ["research"]` makes that kit's
-tools available to an agent, provided the executor receives the kit and its
-required integrations. Results supplied in prompts remain data, not code
-or a new set of tool permissions.
+<a name="mcp-and-oauth"></a>
 
-## Validation, concurrency and failures
+## 🔑 Connect an MCP server
 
-Use `await executor.validate(workflow)` for structured preflight diagnostics.
-`run`/`start`/`resume` reject statically invalid definitions automatically,
-including duplicate names, unavailable references/models and explicit output.
-Missing dynamic fields fail before substitution/request dispatch. Actual
-credentials, remote schemas and model readiness remain runtime checks.
-
-Parallel children read the same snapshot and cannot depend on each other.
-Their values are merged in declaration order, while `onStep` callbacks may
-arrive in completion order. The callback is `@Sendable`, not main-actor UI
-code. A thrown run does not return a partial report; retain records through
-the observer if your host needs partial progress. Records can contain user
-input and model output: apply the host's privacy and retention policy.
-
-There is at most one fallback model per step. An unknown model ID is a
-configuration error, not a reason to try the fallback. Requests and tool
-calls are never retried by the executor; an agent cannot switch to a fallback
-after any tool has run. A timeout does not prove that a remote write failed.
-Avoid replaying a whole workflow after an ambiguous network failure.
-
-`stepTimeout` is not a total-workflow deadline. It bounds individual
-operations and relies on cooperative cancellation; model loading and
-backend behavior can add time. Host execution limits still apply. A
-background job, App Intent or HTTP endpoint must manage its own lifetime.
-
-`WorkflowExecutionLimits` adds a global cooperative duration, model/tool attempt
-budgets and a nested-parallel leaf concurrency cap. Counters/ceilings survive
-checkpoints. `onEvent` provides metadata-only lifecycle events, while operational
-failures retain their typed root cause instead of reducing it to a string.
-See [ExecutionSafety](ExecutionSafety.md) for counting, privacy, error and
-durable-reconciliation boundaries.
-
-## MCP and OAuth
-
-`ModelRelayMCP` implements tool listing and calls over Streamable HTTP. Its
-initial protocol version is `2025-06-18`. It is not a complete MCP SDK:
-resources, prompts and stdio are not implemented. Listed JSON schemas are
-mapped to ModelRelay's field types, not an arbitrary JSON Schema model.
-
-The connector gets a token from a host-supplied closure for each new
-connection. That closure can use **any OAuth client or credential store**;
-using `MCPSignIn` is optional:
+Use a token closure with your own OAuth client or the optional `MCPSignIn`
+helpers. The connector asks for the current token on each new connection.
 
 ```swift
 import ModelRelay
@@ -178,65 +111,60 @@ func makeAuthenticatedExecutor(
 }
 ```
 
-The host must bind credentials to the intended server/resource, authorization
-server, client and account, not just a workflow-local kit ID. Do not return
-an unrelated provider API key as an MCP access token. Keep tokens out of
-workflow JSON, prompts, traces and diagnostic logs.
+Bind credentials to the intended server/resource, authorization server,
+client and account. A kit ID alone is not enough. Keep tokens out of
+workflow JSON, prompts, records and logs; do not substitute an unrelated API key.
 
-### Sign-in building blocks
+<a name="sign-in-building-blocks"></a>
 
-`MCPSignIn` provides these independent operations:
+### 🔐 Sign in, step by step
 
-- `discover(server:challenge:session:)` obtains endpoints and scopes.
-  `Plan` also has a public initializer for host-supplied, trusted endpoints.
-- Use `Client(id:)` for a preregistered public client, or call `register`
-  only when the server supports dynamic registration. Registration is not
-  a mandatory first step for every server.
-- `start` creates a PKCE S256 authorization URL and fresh state. Retain
-  its `Attempt` only for that sign-in transaction.
-- The host presents the URL and validates that the received callback is
-  for its expected redirect URI and authorization server. `finish` checks
-  state and exchanges the code; it does not present UI or persist tokens.
-- Persist returned `Tokens` in host-owned secure storage. They are Codable
-  and can also be initialized from an external OAuth client's credentials.
-- Before connecting, refresh expiring tokens when possible. Serialize
-  refresh per credential set: concurrent workflows must not race rotating
-  refresh tokens. `refresh` preserves the old refresh token if the server
-  does not return a replacement; `isExpired` includes a 60-second margin.
+| Step | SDK helper | Your responsibility |
+| --- | --- | --- |
+| Discover | `discover` or a trusted `Plan` | Trust the endpoints and scopes |
+| Identify the client | `Client(id:)` or `register` | Register dynamically only if supported |
+| Authorize | `start` creates PKCE S256 + state | Present the URL; retain this attempt |
+| Receive the callback | `finish` checks state and exchanges the code | Validate the redirect URI and authorization server |
+| Store | Codable `Tokens` | Secure storage bound to the correct account |
+| Refresh | `refresh`, `isExpired` | Serialize refresh per credential set |
 
-The connector neither refreshes tokens nor opens a browser. Missing tokens
-and HTTP 401 produce `MCPError.needsSignIn` at the connector boundary. The
-executor preserves them in `RelayError.operationFailed`: its category is
-`.authenticationRequired` and `failure.rootCause as? MCPError` retains the
-challenge. The host owns sign-in presentation. A sign-in flow must not
-automatically replay prior workflow writes.
+`isExpired` includes a 60-second margin. Refresh preserves the old refresh
+token when no replacement is returned. External OAuth credentials can also
+initialize `Tokens`.
 
-### Compatibility limits
+The connector neither opens a browser nor refreshes tokens. Missing tokens
+or HTTP 401 produce `MCPError.needsSignIn`; execution retains it under
+`RelayError.operationFailed` with `.authenticationRequired`.
+Inspect `failure.rootCause as? MCPError` for its challenge.
 
-The helpers are not a claim of full conformance with the
-[MCP 2026-07-28 authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
-In particular, validated issuer/mix-up protection, Client ID Metadata
-Documents and scope-upgrade orchestration are not implemented. Discovery
-also retains legacy same-origin endpoint fallbacks. Hosts needing those
-guarantees should supply tokens through a suitable OAuth implementation,
-not assume the helpers provide them.
+> ⚠️ A successful sign-in is not permission to replay earlier workflow writes.
 
-The default connector opens a fresh MCP session for each connecting step;
-it does not pool connections across agents or runs. A host can implement
-`ToolServerConnector` to manage connection lifetime. Any pool must isolate
-servers, accounts and authorization changes rather than cache by kit ID alone.
+<a name="compatibility-limits"></a>
 
-## Product boundaries
+### 📣 Know the connector's scope
 
-Keep a single package dependency and select the required products. HTTP,
-specialized cloud decisions and MCP use the core and Apple frameworks.
-The core depends on AnyLanguageModel; it does not implement competing cloud
-providers. SwiftScript/ShellKit and the ModelRelayScript product are removed.
-Custom code is a compiled closure, not a package-selected interpreter.
+| Supported | Not provided |
+| --- | --- |
+| Tool listing/calls over Streamable HTTP; initial protocol `2025-06-18` | MCP resources, prompts or stdio |
+| Mapping tool schemas to ModelRelay fields | Arbitrary JSON Schema support |
+| OAuth building blocks | Full authorization-spec conformance |
+| A fresh connection per connecting step | Connection pooling |
 
-MLX is opt-in through the `MLX` package trait as well as its product. This
-changes the earlier default: clients that used implicit MLX support must
-enable `traits: ["MLX"]` explicitly. Package resolution can still fetch
-optional dependencies even when their targets are not linked. A separate
-distribution package would be needed if dependency-resolution isolation
-became a hard requirement.
+OAuth helpers lack validated issuer/mix-up protection, Client ID Metadata
+Documents and scope-upgrade orchestration. Discovery retains legacy same-origin
+endpoint fallbacks. Supply a suitable OAuth client if you need those guarantees.
+
+You can implement `ToolServerConnector` to manage connection lifetime.
+Isolate any pool by server, account and authorization changes, not just kit ID.
+
+<a name="product-boundaries"></a>
+
+## 📦 Keep the dependency small
+
+Choose products from one package. HTTP, decisions and MCP use the core and
+Apple frameworks; general cloud providers come from AnyLanguageModel.
+
+MLX needs both its product and `traits: ["MLX"]`. SwiftPM may still resolve
+unused optional dependencies; selecting products controls compilation/linking,
+not complete resolution isolation.
+[Changes from older versions →](NativeRuntimeMigration.md)

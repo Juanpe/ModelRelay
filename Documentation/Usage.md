@@ -1,48 +1,42 @@
-# Usage recipes
+# 🧩 Usage recipes
 
-[← Back to the README](../README.md)
+[← README](../README.md) · [Integration](Integration.md) · [Safety](ExecutionSafety.md)
 
-Start with the README's receipt example, then add the pieces your feature needs:
+Pick a recipe and add the integrations it needs. Models used by a step must
+be available in your executor's catalog.
 
-- [Step types](#step-types)
-- [Composition](#composition)
-- [Values and input](#values-and-input)
-- [HTTP requests and agent tools](#http-requests-and-agent-tools)
-- [Cloud models](#cloud-models)
-- [Images](#images)
-- [Custom Swift](#custom-swift)
-- [MCP tools and OAuth](#mcp-tools-and-oauth)
-- [Decision models](#decision-models)
+[🎯 Steps](#step-types) · [🔀 Branches](#composition) · [📦 Values](#values-and-input) ·
+[🌐 HTTP](#http-requests-and-agent-tools) · [☁️ Cloud](#cloud-models) · [📷 Images](#images) ·
+[👨‍💻 Swift](#custom-swift) · [🧰 MCP](#mcp-tools-and-oauth) · [🗳 Decisions](#decision-models)
 
-## Step types
+<a name="step-types"></a>
 
-| Step | What it does |
+## 🎯 Pick a step
+
+| Step | Result |
 | --- | --- |
-| `prompt` | Generates text |
-| `extract` | Returns typed fields through guided generation |
-| `classify` | Chooses one label |
-| `decide` | Answers typed questions together |
-| `agent` | Lets a model call configured tools before answering |
-| `readImage` | Reads an image with a vision model or on-device text recognition |
-| `template` | Substitutes values without calling a model |
-| `request` | Calls an HTTP API; a JSON response becomes typed values |
-| `useTool` | Calls a named tool directly, without a model |
-| `custom` | Runs a trusted, compiled Swift body |
-| `ifEquals` / `switchOn` | Chooses a branch from a result |
-| `parallel` | Runs independent children and collects their results |
+| `prompt` | Generated text |
+| `extract` | Typed fields |
+| `classify` | One label |
+| `decide` | Typed answers to several questions |
+| `agent` | An answer after optional tool calls |
+| `readImage` | Text from a vision model or on-device OCR |
+| `template` | Substituted text, no model |
+| `request` | An HTTP result; JSON becomes typed values |
+| `useTool` | One direct named tool call, no model |
+| `custom` | Your compiled Swift result |
+| `ifEquals` / `switchOn` | The selected branch's result |
+| `parallel` | A dictionary of child results |
 
-Workflows are trees of steps, not manually wired graphs. Constructing a
-workflow never calls a model or tool.
+Constructing the tree runs no model or tool. Declarative workflows are Codable;
+compiled custom bodies are not.
 
-## Composition
+<a name="composition"></a>
 
-Builders collect ordinary values. You can mix existing `Step` values,
-arrays of steps and Swift `if`, `switch`, `for` or availability checks.
-`Step.extract` also accepts existing fields through `FieldBuilder`.
-Array-based initializers remain available.
+## 🔀 Choose a path
 
-Swift control flow inside a builder runs when you **build** the workflow.
-To branch on a model's result during **execution**, use an explicit step:
+Swift `if`/`switch`/`for` inside a builder runs at **construction time**.
+To branch on a model's answer during **execution**, use a workflow step:
 
 ```swift
 import ModelRelay
@@ -59,51 +53,45 @@ let workflow = Workflow(
 }
 ```
 
-For multiple paths, `Step.switchOn` accepts `[SwitchCase]`.
-`SwitchCase("value") { ... }` builds a case; the trailing block of
-`Step.switchOn` builds the default branch.
+For more paths, use `Step.switchOn` with `[SwitchCase]`; its trailing block
+is the default branch. Builders also accept reusable steps/arrays, optional
+branches and availability checks. `FieldBuilder` accepts existing fields.
 
-Builders are syntax sugar, not validators. Execution validates definitions
-automatically; `await executor.validate(workflow)` gives diagnostics before
-you run. `referenceIssues` remains available for reference-only checks.
+Execution validates automatically. Use `await executor.validate(workflow)`
+for diagnostics, or `referenceIssues` for reference-only checks.
 
-## Values and input
+<a name="values-and-input"></a>
 
-`Value` supports text, numbers, booleans, lists, dictionaries and images.
-Models receive structured values as JSON; text templates format them for people.
+## 📦 Pass values between steps
 
-| To read… | Use… |
+| Read… | With… |
 | --- | --- |
-| The previous result | Leave the step's `input` unset |
-| The original workflow input | `input: "input"` |
-| A completed step | `input: "expense"` |
-| One field | `input: "expense.total"` |
+| Previous result | Leave `input` unset |
+| Original input | `input: "input"` |
+| A result / field | `input: "expense"` / `input: "expense.total"` |
 | A value inside text | `{{expense.total}}` |
-| One result from a parallel block | `{{analysis.tone}}` or `{{tone}}` |
+| A parallel result | `{{analysis.tone}}` or `{{tone}}` |
 
-Parallel children receive the same incoming snapshot. They cannot read
-each other's results. Their block returns a dictionary keyed by child name.
+`Value` supports text, number, bool, list, dictionary and image. Models read
+structured values as JSON; text templates format them for people.
 
-> If an instruction contains template markers, the rendered text is the
-> **entire prompt**. Include `{{input}}` yourself if the model needs it.
+> 📣 Template markers make the rendered instruction the **entire prompt**.
+> Include `{{input}}` yourself when the model needs it.
 
-`Workflow(name: "Name", output: "result")` returns that named step's whole value;
-without `output`, execution returns the last result. Invalid explicit
-outputs and missing references fail rather than silently returning another
-value or substituting empty text.
+Parallel children read the same snapshot, not each other's results.
+`output: "result"` selects that step's whole value; omitting it returns the
+last result. Missing references or invalid explicit outputs fail rather than
+silently substituting another value.
 
-Each execution owns its results and records. Reusing an executor does not
-carry a conversation between unrelated executions. See [context and policies](ContextAndPolicies.md)
-for shared native sessions and explicit handoffs between models.
+Executions are independent. Opt into [conversation/handoff](ContextAndPolicies.md)
+for shared history or selected context. `stepTimeout` defaults to 30 seconds
+per bounded operation, not per workflow; cancellation remains cooperative.
 
-`stepTimeout` defaults to 30 seconds per bounded operation, not per workflow.
-A fallback has its own attempt. Cancellation and timeouts are cooperative;
-they cannot override limits imposed by the caller or operating system.
-For total-duration and call budgets, see [execution safety](ExecutionSafety.md).
+<a name="http-requests-and-agent-tools"></a>
 
-## HTTP requests and agent tools
+## 🌐 Call an HTTP API
 
-Add the `ModelRelayHTTP` product and supply a request performer:
+Add `ModelRelayHTTP` and supply its request performer:
 
 ```swift
 import ModelRelay
@@ -117,32 +105,24 @@ let workflow = Workflow(
 let executor = WorkflowExecutor(requests: URLSessionRequestPerformer())
 ```
 
-Replace the example URL with your API before running it. The core has no
-network implementation; you can supply your own `RequestPerformer` instead.
+Replace example URLs before running. You can also supply your own
+`RequestPerformer`.
 
-URL substitutions are percent-encoded. JSON substitutions are escaped for
-their position: `"name": "{{expense.merchant}}"` inserts text, while
-`"expense": {{expense}}` inserts a typed JSON value. A model result fills
-the configured request; it does not become executable code.
+| Template | Behavior |
+| --- | --- |
+| URL `{{input}}` | Percent-encoded substitution |
+| JSON `"name": "{{expense.merchant}}"` | Escaped text |
+| JSON `"expense": {{expense}}` | Typed JSON value |
+| `{{secret.NAME}}` | Host-provided request credential, hidden in descriptions |
+| Whole URL + `reading: .page` | HTTP(S) page title/readable text, without scripts or markup |
 
-Credentials come from a host-supplied `SecretProvider`, such as your
-Keychain integration. `{{secret.NAME}}` is available only in request
-templates and is hidden in request descriptions, not exposed to prompts.
-Keep credentials out of workflow definitions.
+> 🔒 Supply a `SecretProvider`; never embed credentials in workflow JSON.
+> Writes need an explicit `WritePolicy`. Requests/tools are never retried,
+> and a timeout cannot prove a remote write failed.
 
-Writes are denied by default. Supply `.allow` or `.ask { request in … }`
-as the executor's `WritePolicy` when your host authorizes them.
-The executor never retries HTTP requests or tool calls. A timeout still
-cannot tell you whether a remote write succeeded.
+### 🧰 Give an agent a tool
 
-To read a web page, use
-`HTTPRequest(url: "{{input}}", reading: .page)`. It returns the title and
-readable text, without page scripts, menus or markup. A whole-value URL
-reference must resolve to an HTTP or HTTPS address.
-
-### Give an agent an HTTP tool
-
-The model fills typed parameters; the request reads them as `{{args.NAME}}`:
+The model fills typed parameters. The request reads them as `{{args.NAME}}`:
 
 ```swift
 import ModelRelay
@@ -160,18 +140,18 @@ let workflow = Workflow(
 }
 ```
 
-Run it with an executor configured with a request performer. Tools use the
-same escaping, secrets and write policy as request steps. Agent steps have
-a six-tool-call limit; after a tool is dispatched, an agent does not switch
-to a fallback model. This is not an exactly-once delivery guarantee.
+Run with a request performer. Tools share the same escaping, secrets and write
+policy as requests. The step permits six tool calls; a host tool attempt
+prevents fallback. This is not an exactly-once guarantee.
 
-Group tools in a `ToolKit` to reuse them. Pass the kits to the executor and
-select them with `kits: ["weather"]` on an agent step.
+Group reusable tools in a `ToolKit`, pass it to the executor and select it
+with `kits: ["weather"]`.
 
-## Cloud models
+<a name="cloud-models"></a>
 
-Register AnyLanguageModel providers directly; no ModelRelay provider bridge
-is needed:
+## ☁️ Choose a cloud model
+
+Register native AnyLanguageModel providers directly:
 
 ```swift
 import AnyLanguageModel
@@ -191,22 +171,19 @@ let workflow = Workflow(
 }
 ```
 
-Choose a server-supported model and pass credentials at runtime, never in
-workflow JSON. For Anthropic, use
-`AnthropicLanguageModel(apiKey: apiKey, model: modelName)`.
+For Anthropic, use `AnthropicLanguageModel(apiKey: apiKey, model: modelName)`.
+Choose a supported model and pass credentials at runtime.
 
-If you import providers directly, declare AnyLanguageModel and its product
-in your client's SwiftPM dependencies too. Both packages resolve the same
-AnyLanguageModel 1.0.0 dependency, not two copies.
+Declare AnyLanguageModel and its product in clients that import it.
+It resolves the same 1.0.0 dependency, not a second copy.
+[Resource lifetime →](ContextAndPolicies.md#resource-lifetime)
 
-AnyLanguageModel owns inference and native conversations. ModelRelay caches
-model factories per active execution invocation; provider weight and KV-cache
-management remains with the provider. [Resource lifetime details →](ContextAndPolicies.md#resource-lifetime)
+<a name="images"></a>
 
-## Images
+## 📷 Read an image
 
 `readImage` takes `Value.image` and returns text. An empty instruction asks
-for all text as written; a vision-capable model can follow a specific request:
+for all text as written:
 
 ```swift
 import Foundation
@@ -223,67 +200,61 @@ func readReceipt(_ jpeg: Data, using executor: WorkflowExecutor) async throws ->
 }
 ```
 
-Register `claude` with `supportsImages: true` and a model that actually
-supports vision. Native providers handle their API's image encoding.
-The executor validates and normalizes the image before inference.
+| Model | Setup / behavior |
+| --- | --- |
+| Your vision model | Register with `supportsImages: true`; the actual model must support vision |
+| `.appleTextRecognition` | On-device Vision; ignores instructions; call `TextRecognitionModel.prepare()` to warm up |
 
-`.appleTextRecognition` uses on-device Vision and ignores the instruction.
-That step keeps the image on the device; a later step still needs its own
-privacy policy. First use prepares the recognition model; call
-`TextRecognitionModel.prepare()` ahead of time to avoid the first-run delay.
+The executor validates/normalizes images; native providers encode them.
+Missing image capability can use the step's one fallback.
+Records describe images without retaining their bytes.
 
-An entry without image support fails before inference and can use its one
-fallback. Step records describe the image, never storing its bytes.
+> 🔒 OCR keeps that step local. Later steps still need their own privacy policy.
 
-## Custom Swift
+<a name="custom-swift"></a>
 
-Use a compiled body for logic that does not need a model:
+## 👨‍💻 Write a Swift body
+
+No model needed for trimming text or checking your business rules:
 
 ```swift
 import Foundation
 import ModelRelay
 
 let workflow = Workflow(
-    name: "Normalize and summarize"
+    name: "Normalize text"
 ) {
     Step.custom("normalized") { context in
         .text(context.input.textValue.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-    Step.prompt("summary", "Summarize this article.", model: .appleOnDevice)
-    Step.custom("message") { context in
-        .dictionary([
-            "summary": context.input,
-            "original": context.workflowInput,
-            "normalized": context["normalized"] ?? .null,
-        ])
     }
 }
 ```
 
 The body is `@Sendable (CustomStepContext) async throws -> Value`.
-It reads the previous output by default, or a selected `input:` reference.
-`results` and the subscript expose completed results only. The body runs
-once on its selected path, with step records and cooperative cancellation,
-without fallback or automatic replay.
 
-Custom bodies are trusted host code. `WritePolicy` does not sandbox them;
-their context has no executor transports or secrets, but closures can
-capture host resources. Blocking code cannot be forcibly stopped by a timeout.
-Never use a body to evaluate model-generated source.
+| Context member | Reads |
+| --- | --- |
+| `input` | Previous result, or your explicit `input:` selection |
+| `workflowInput` | Original input |
+| `results` / `context["step"]` | Completed named results |
 
-Workflow definitions containing bodies cannot be serialized, including
-nested closures. Declarative workflows remain Codable. Reference renaming
-cannot inspect keys hardcoded in a closure.
+Bodies run once on the selected path, with records and cooperative cancellation.
+No fallback or automatic replay.
 
-For recovery, rebuild the definition in Swift and restore its separate data
-checkpoint. Change the host revision when bodies or captures change.
-A host-owned code editor can invoke its own interpreter here; ModelRelay
-does not choose or depend on that interpreter.
+> ⚠️ Trusted host code, not a sandbox. Closures can capture resources even
+> though the context exposes no executor secrets/transports. Never evaluate
+> model-generated source; blocking code cannot be forcibly timed out.
 
-## MCP tools and OAuth
+Custom definitions cannot be serialized, including nested closures.
+Rebuild them in Swift for [recovery](Recovery.md) and bump the host revision
+when bodies/captures change. Renaming cannot rewrite hardcoded closure keys.
+A client may call its own interpreter here; the SDK does not depend on one.
 
-Add `ModelRelayMCP`. A kit with a server discovers its tools over Streamable
-HTTP. Agents can use the kit; a `useTool` step calls one tool directly:
+<a name="mcp-tools-and-oauth"></a>
+
+## 🧰 Use an MCP tool
+
+Add `ModelRelayMCP`. Agents can use discovered tools, or call one directly:
 
 ```swift
 import ModelRelay
@@ -304,24 +275,19 @@ let workflow = Workflow(
 }
 ```
 
-Tools not marked read-only are treated as writes and need authorization.
-Tool calls are not retried by the executor.
+Tools not marked read-only count as writes and need authorization.
+They are not retried.
 
-For OAuth, `MCPConnector.accessToken` asks the host for the current token
-when connecting. Use your own OAuth client, or the optional `MCPSignIn`
-helpers for discovery, registration, PKCE, exchange and refresh.
-Your host owns browser presentation, callback validation, secure token
-storage and serialized refresh.
+For OAuth, provide `MCPConnector.accessToken` from your OAuth client or use
+the optional `MCPSignIn` helpers. Your host owns the browser, callback checks,
+secure storage and serialized refresh.
+[Authentication contract and connector limits →](Integration.md#mcp-and-oauth)
 
-This is a tools connector, not a complete MCP SDK: its initial protocol is
-`2025-06-18`; resources, prompts and stdio are not implemented. OAuth helpers
-also have compatibility limits. Read the [authentication contract](Integration.md#mcp-and-oauth)
-before integrating a server.
+<a name="decision-models"></a>
 
-## Decision models
+## 🗳 Ask typed questions
 
-Need several typed answers rather than free-form text? A `decide` step can
-ask yes/no, choice and score questions together:
+Need yes/no, choices or scores rather than a generated paragraph?
 
 ```swift
 import ModelRelay
@@ -345,14 +311,11 @@ let workflow = Workflow(
 }
 ```
 
-`DecisionsAPIModel` uses the specialized decisions API, including TypeSafe's
-Jev through Vercel AI Gateway, and can return confidence information.
-Language models answer the same questions through a guided schema; an
-available on-device model can be the fallback.
+`DecisionsAPIModel` supports specialized decisions such as TypeSafe's Jev
+through Vercel AI Gateway, with confidence information. A language model can
+answer the same questions through guided generation, including as an
+available on-device fallback.
 
-Decision models answer typed questions. They do not generate summaries or
-serve as general-purpose agents.
+Decision models do not generate summaries or act as general-purpose agents.
 
-For execution policies, budgets, typed failures and approval checkpoints,
-continue with [context and policies](ContextAndPolicies.md),
-[execution safety](ExecutionSafety.md) and [recovery](Recovery.md).
+[Policies →](ContextAndPolicies.md) · [Errors and limits →](ExecutionSafety.md) · [Review and resume →](Recovery.md)

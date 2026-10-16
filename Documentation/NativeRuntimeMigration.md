@@ -1,46 +1,57 @@
-# Native AnyLanguageModel runtime
+# 🚚 Migrating to the native runtime
 
-This is an intentional breaking migration of the standalone SDK. It does
-not change any client application. ModelRelay now depends on the unmodified
-AnyLanguageModel **1.0.0** release, not a local checkout or patched fork.
+[← README](../README.md) · [Usage](Usage.md) · [Integration](Integration.md)
 
-## Ownership
+Moving from the earlier SDK? ModelRelay now uses the unmodified
+AnyLanguageModel **1.0.0** release. No patched fork or transcript bridge is needed.
 
-- AnyLanguageModel owns inference, native sessions, provider transcripts,
-  structured generation, reasoning replay and backend resource lifecycle.
-- ModelRelay owns workflow execution, values, branching/parallel snapshots,
-  one fallback per model step, permissions and step records.
-- The host owns credentials, persistence, user interaction and trusted
-  custom code. MCP OAuth helpers still do not own sign-in UI or token storage.
+<a name="ownership"></a>
 
-There is no ModelRelay provider-to-FoundationModels adapter, transcript
-converter or second conversation runtime. Apple models use the upstream
-native integrations; Vision OCR is a native AnyLanguageModel implementation.
+## 🧩 Who owns what?
 
-## API changes
+| Layer | Responsibility |
+| --- | --- |
+| AnyLanguageModel | Inference, sessions, provider transcripts, structured generation and backend resources |
+| ModelRelay | Workflow order, values, branches, fallback, permissions, records and recovery contracts |
+| Your host | Credentials, UI, persistence and trusted custom code |
 
-1. Catalog factories return `any AnyLanguageModel.LanguageModel`, rather
-   than Apple's protocol. Custom model implementations must adopt that
-   protocol; models are not silently wrapped in a compatibility bridge.
-2. Replace `OpenAICompatibleModel` with `OpenAILanguageModel`, and
-   `ClaudeModel` with `AnthropicLanguageModel`. Import AnyLanguageModel and
-   declare its product/dependency in clients that construct providers.
-   Register a shared backend value when resource reuse is appropriate.
-3. `ModelRelayCloud` now contains the specialized decisions API (such as
-   Jev), not duplicated general-purpose chat providers.
-4. Register vision-capable custom entries with `supportsImages: true`.
-   There is no universal capability property in AnyLanguageModel 1.0.0.
-   Built-in Apple entries consult their native image support.
-5. SwiftScript, ShellKit, `ModelRelayScript`, `ScriptLanguage`, `ScriptRunner`
-   and source-string script steps are removed from the SDK. Use a compiled
-   custom body instead. A client may call its own interpreter inside that
-   body if it explicitly wants a code editor/runtime.
+Apple models use the upstream integrations. Vision OCR implements the native
+AnyLanguageModel protocol.
+
+<a name="api-changes"></a>
+
+## 🔄 Update these entry points
+
+| Earlier API | Use now |
+| --- | --- |
+| Factories returning Apple's model protocol | `any AnyLanguageModel.LanguageModel` |
+| `OpenAICompatibleModel` | `OpenAILanguageModel` from AnyLanguageModel |
+| `ClaudeModel` | `AnthropicLanguageModel` from AnyLanguageModel |
+| `WorkflowRunner` | `WorkflowExecutor` |
+| `RunCheckpoint` / `RunCheckpointStore` | `WorkflowExecutionCheckpoint` / `WorkflowExecutionCheckpointStore` |
+| `RunReport` / `RunOutcome` | `WorkflowExecutionReport` / `WorkflowExecutionOutcome` |
+| `ExecutionPolicy` / `runID` | `WorkflowExecutionPolicy` / `executionID` |
+| Source-string script steps | Compiled `Step.custom` bodies |
+
+Import and declare AnyLanguageModel in clients that construct providers.
+`ModelRelayCloud` now supplies specialized decisions such as Jev, not general
+chat wrappers. Register custom vision entries with `supportsImages: true`;
+the flag does not make a text-only model support images.
+
+SwiftScript, ShellKit, `ModelRelayScript`, `ScriptLanguage` and `ScriptRunner`
+are removed. SwiftSyntax remains an upstream macro dependency; no interpreter
+forces a competing major version. MLX is now opt-in: select its product and
+enable `traits: ["MLX"]`.
+
+### 👨‍💻 Replace scripts with Swift
 
 ```swift
 import Foundation
 import ModelRelay
 
-let workflow = Workflow("Normalize") {
+let workflow = Workflow(
+    name: "Normalize"
+) {
     Step.custom("clean") { context in
         .text(context.input.textValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -49,59 +60,34 @@ let workflow = Workflow("Normalize") {
 let report = try await WorkflowExecutor().run(workflow, input: .text("  Hello  "))
 ```
 
-Custom bodies are Sendable async throwing closures. They receive an immutable
-value snapshot (`input`, `workflowInput`, `results`, or `context["step"]`).
-They execute once without fallback; cancellation and timeout are cooperative.
-They have the developer's ambient authority, including captured resources:
-WritePolicy does not sandbox arbitrary Swift code. The context itself does
-not expose executor secrets or transports.
+> ⚠️ Bodies are trusted Sendable async code, not sandboxed source. They can
+> capture host resources and cannot be serialized. Rebuild the definition
+> for recovery; keep execution checkpoints separately.
+> [Custom-step contract →](Usage.md#custom-swift)
 
-Custom closures cannot be encoded or decoded. Saving a containing workflow,
-including a nested custom body, throws explicitly. Declarative-only
-workflows still round-trip. Renaming a step updates a custom step's explicit
-input reference but cannot rewrite hardcoded references inside compiled code.
+<a name="native-agent-execution"></a>
 
-## Native agent execution
+## 🤝 Check agent behavior
 
-Steps with tools consume the native session's streaming response internally;
-callers still receive the final Value and normal step records. This uses the
-provider's complete tool loop. In AnyLanguageModel 1.0.0, Anthropic's
-non-streaming response executes one tool round without requesting the final
-answer; its streaming implementation handles the full continuation.
+Tool-enabled steps consume the provider's native streaming tool loop internally.
+Callers still get a final `Value` and normal records, not token streaming.
 
-No tools are re-executed by a second runtime. ModelRelay's host tool wrappers
-still enforce permissions, secret isolation, output truncation and the
-six-call step budget. Providers may impose stricter limits, such as rejecting
-an identical repeated tool round. After any host tool attempt, failure never
-switches models or replays the write.
+This handles the full Anthropic continuation in AnyLanguageModel 1.0.0;
+its non-streaming path performs one tool round without requesting a final answer.
+There is no second runtime replaying tools.
 
-Reusing a model still does **not** implicitly share conversation history.
-Steps are isolated by default. The subsequent [context/policy layer](ContextAndPolicies.md)
-adds opt-in run-local native conversations, selected-value handoff and
-coalesced model factory loads. Persistent memory across runs and context
-budgeting remain unimplemented.
+Host wrappers enforce permissions, secret isolation, output truncation and a
+six-call step budget. Providers may be stricter. A host tool attempt prevents
+fallback afterward.
 
-The later [recovery layer](Recovery.md) adds host-stored execution checkpoints
-and approval/resume with native history restoration within one logical run.
-It does not introduce a second session runtime or serialize executable bodies.
+Reusing a model does not share history automatically. Opt into
+[conversations/handoff](ContextAndPolicies.md), or use
+[checkpoints](Recovery.md) to restore the same logical execution. Renaming
+steps cannot rewrite references hardcoded inside custom closures.
 
-## Verification at the runtime migration checkpoint
+<a name="verification-at-the-runtime-migration-checkpoint"></a>
 
-With Swift 6.4 / Xcode 27 on macOS 27, the default suite passes with
-warnings-as-errors: **103 core + 30 network/provider/MCP test definitions**,
-including 12 custom-body tests and parameterized cancellation coverage.
-Three live Apple-model tests remain disabled. Provider tests use URLProtocol
-HTTP/SSE fixtures with the actual OpenAI and Anthropic providers, not keys,
-live services or inference. They verify tools once, permissions/secrets,
-no replay after writes, fallback, dynamic types, images and reasoning-signature
-replay within an Anthropic tool loop.
-
-The standalone client also exercises declarative Codable round trips and a
-custom-body workflow and compiles with Swift warnings-as-errors. The optional
-`MLX` trait and `ModelRelayMLX` target also compile with Swift warnings-as-errors;
-the upstream MLX Metal/C++ sources emit C++17-extension warnings. This is a
-build check, not GPU inference. Real-provider behavior, weight downloads and
-cross-platform deployment are not established by these offline tests.
+## 🧪 Verify your integration
 
 ```sh
 env -u RELAY_LIVE swift test -Xswiftc -warnings-as-errors
@@ -109,6 +95,10 @@ env -u RELAY_LIVE swift run --package-path Examples/StandaloneClient StandaloneC
 swift build --traits MLX --target ModelRelayMLX -Xswiftc -warnings-as-errors
 ```
 
-The older adapter experiment and 603 alignment fixtures are retired.
-SwiftSyntax is still a transitive macro dependency of AnyLanguageModel, but
-there is no longer an interpreter forcing a conflicting major version.
+Tests use scripted native sessions and actual providers with stubbed HTTP/SSE.
+The standalone client exercises Codable, custom bodies and recovery without
+inference. MLX compilation is separate from Metal/GPU inference; upstream
+C++ warnings may still occur.
+
+These checks do not verify live services, weight downloads or every deployment
+platform. The old adapter and SwiftSyntax 603 alignment experiments are retired.

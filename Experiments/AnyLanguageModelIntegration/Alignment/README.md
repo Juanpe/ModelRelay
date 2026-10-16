@@ -1,14 +1,17 @@
-# Historical SwiftSyntax alignment result
+# 🗃 Historical SwiftSyntax alignment
 
-The October 15, 2026 experiment verified that AnyLanguageModel 1.0.0 could
-compile with SwiftSyntax 603.0.2 after changing one manifest requirement:
-95 core, 8 interpreter and 1 native macro/script smoke test passed together;
-70 selected upstream macro/schema tests also passed. This was a dependency
-compatibility check, not live-provider validation.
+[← Experiment](../README.md) · [Current migration guide](../../../Documentation/NativeRuntimeMigration.md)
 
-**Superseded:** ModelRelay no longer depends on SwiftScript or ShellKit.
-It uses the unmodified AnyLanguageModel 1.0.0 release and its SwiftSyntax
-602 requirement. The temporary alignment fixtures and runtime bridge have
-been retired; they are not required to build the SDK.
+> 📣 Superseded. These fixtures are not needed to build ModelRelay.
 
-See [native runtime migration](../../../Documentation/NativeRuntimeMigration.md).
+The October 15, 2026 experiment changed one manifest requirement to compile
+AnyLanguageModel 1.0.0 with SwiftSyntax 603.0.2.
+
+| Historical check | Result |
+| --- | --- |
+| Core / interpreter / native smoke tests | 95 / 8 / 1 passed |
+| Selected upstream macro/schema tests | 70 passed |
+| Live providers | Not verified |
+
+ModelRelay now uses unmodified AnyLanguageModel 1.0.0 and its SwiftSyntax 602
+requirement. SwiftScript, ShellKit and the temporary runtime bridge are retired.

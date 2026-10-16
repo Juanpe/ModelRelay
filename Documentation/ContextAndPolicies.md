@@ -1,16 +1,28 @@
-# Context, resources and execution policies
+# 🧠 Context and policies
 
-ModelRelay coordinates native AnyLanguageModel sessions. It does not add a
-second inference runtime, translate transcripts or reconstruct agents from
-model-generated code. All state described here lives inside one `run` call.
+[← README](../README.md) · [Integration](Integration.md) · [Recovery](Recovery.md)
 
-## Three context modes
+Want two agents to remember the same conversation? Or pass only one result
+to a different model? Choose that explicitly.
 
-Steps are isolated by default (`context == nil`, or `.isolated`). Reusing a
-model, tool kit or instruction does not implicitly share a conversation.
+[🤝 Context](#three-context-modes) · [♻️ Resources](#resource-lifetime) · [🔒 Policies](#execution-policies) · [🏷 Privacy](#privacy-propagation)
+
+<a name="three-context-modes"></a>
+
+## 🤝 Choose what a step remembers
+
+| Mode | What the step receives |
+| --- | --- |
+| Default / `.isolated` | Its selected input, in a fresh session |
+| `.conversation("author")` | Native history for that name **and model ID** |
+| `.handoff(["revision"])` | A fresh session with a dictionary of selected values |
 
 ```swift
-let workflow = Workflow("Draft, revise, edit") {
+import ModelRelay
+
+let workflow = Workflow(
+    name: "Draft, revise, edit"
+) {
     Step.agent("draft", "Draft a short answer.", model: "writer")
         .withContext(.conversation("author"))
     Step.agent("revision", "Improve your earlier answer.", input: "input", model: "writer")
@@ -20,62 +32,64 @@ let workflow = Workflow("Draft, revise, edit") {
 }
 ```
 
-- `conversation(name)` reuses one actual native session for that name **and
-  model ID**. Earlier prompts, responses and tool history remain native,
-  including opaque provider state. Current tools, policies, argument
-  resolvers and call logs are rebound with native dynamic instructions.
-- `handoff(references)` starts a fresh session with a dictionary containing
-  only the selected values as its input. No implicit previous value or
-  original workflow input is added. Include `"input"` if it is needed.
-  Explicit instruction templates still read their declared references as
-  usual; the existing template rule can replace the ordinary input prompt.
-  Handoff cannot also specify `input:`. Missing references throw.
-- Handoff transfers values, not instructions, permissions, a transcript or
-  tools. A new provider does not get another provider's signatures, hidden
-  reasoning state or raw tool-call metadata.
+Register `writer` and `editor` in your catalog first.
 
-The same conversation name with two model IDs means two separate sessions.
-A fallback therefore has its own history, not an automatic copy of the
-primary model's transcript. To transfer information across models, explicitly
-select values or templates. Failed prompts roll back through the native
-session's `revertTranscript` policy. There is still at most one fallback,
-and no fallback after a tool attempt. No exactly-once recovery is claimed.
+- Conversations retain native responses and tool history. Each step rebinds
+  its current tools, policies, argument resolvers and call log.
+- A different model, including a fallback, gets its own history. Failed
+  prompts use the native session's `revertTranscript` policy.
+- Handoff transfers values, not transcripts, instructions, permissions or tools.
+  Include `"input"` to pass the original input. Do not also set `input:`;
+  missing references fail.
+- Instruction templates still follow the [prompt substitution rule](Usage.md#values-and-input),
+  even with handoff.
 
-Specialized `DecisionModel` implementations have no native conversation:
-use handoff for them. Language-model decide/classify steps can participate
-in a native conversation. Image steps can continue a conversation, but
-handoff is text/value input, not an image attachment.
+> 📣 Parallel branches cannot share a conversation/model pair, including
+> potential use in nested branches. Separate executions never share history.
+> A resumed execution can restore its own history.
 
-Parallel branches may use different conversations. Sharing the same
-name/model between branches is rejected before any work runs, including
-possible use inside nested conditional branches. This conservative check
-avoids scheduling-dependent history and concurrent mutation of a session.
-Neither sequential nor overlapping runs on the same executor share history.
+Specialized `DecisionModel` implementations support handoff, not native
+conversations. Language-model decide/classify steps can share a conversation.
+Image steps can continue one; handoff is not an image attachment.
 
-## Resource lifetime
+<a name="resource-lifetime"></a>
 
-Factories are coalesced and cached per model ID and run, separately for
-language models and decision models. Sharing a backend does not opt into
-conversation history. A cancelled or timed-out waiter leaves independently;
-the shared producer is cancelled only when no waiting step needs it.
-Failed loads are not cached. The run releases its own references at the end.
+## ♻️ Reuse resources, not accidental memory
 
-For resource reuse across runs, return a host-owned shared backend or use
-the provider's cache. We do not promise that a fresh session reloads weights,
-nor that retaining a model guarantees KV-cache reuse. Native resource
-management remains the provider's responsibility. Cancellation and timeout
-are cooperative, not a way to terminate arbitrary blocking Swift code.
+| Resource | Lifetime |
+| --- | --- |
+| Model/decision factory result | Cached per ID and active invocation; concurrent loads are coalesced |
+| Named conversation | One logical execution; restorable through checkpoints |
+| Weights / KV cache | Managed by the provider or your shared backend |
+| MCP connection | No built-in pool |
 
-## Execution policies
+A cancelled waiter does not cancel another step's load. The producer is
+cancelled when no waiters remain; failed loads are not cached. Finishing
+releases the invocation's references. Resume loads models lazily again.
 
-`WorkflowExecutor(policy:)` sets the ceiling. `run(..., policy:)` can narrow
-one execution, and `step.withPolicy(...)` narrows a step or block. Combining
-policies always picks the stricter restriction;
-children cannot grant themselves permissions removed by their parent.
+Return a host-owned shared backend for reuse across executions. Keeping a
+model alive does not guarantee KV-cache reuse, and a fresh session does not
+necessarily reload weights.
+
+<a name="execution-policies"></a>
+
+## 🔒 Set the ceiling, then narrow it
+
+Apply policy to the executor, one `run(..., policy:)`, or a step/block with
+`withPolicy`. Children can only become stricter.
+
+| Policy | Effect |
+| --- | --- |
+| `.localOnly` | Requires `location: .local` before factory execution; blocks all mediated HTTP/MCP, including localhost, reads and discovery |
+| `.readOnly` | Filters write tools and rejects write operations |
+| `.noTools` | Blocks mediated requests/tools and avoids MCP discovery |
+| `WritePolicy` | Approves writes that the other policies still permit |
 
 ```swift
 let executor = WorkflowExecutor(policy: .localOnly)
-let workflow = Workflow("Private review") {
+let workflow = Workflow(
+    name: "Private review"
+) {
     Step.prompt("draft", "Summarize.", model: .appleOnDevice)
         .withContext(.conversation("reviewer"))
     Step.agent("review", "Review.", model: .appleOnDevice)
@@ -84,88 +98,69 @@ let workflow = Workflow("Private review") {
 }
 ```
 
-- `data: .localOnly` permits only catalog entries explicitly declared
-  `location: .local`. Remote and unspecified entries are rejected before
-  factory execution, including a fallback and specialized decision models.
-  It also blocks all executor-mediated HTTP and MCP operations, including reads,
-  localhost endpoints and MCP discovery/sign-in connector callbacks.
-- `tools: .readOnly` filters agent tools and rejects operations marked as
-  writes, including direct HTTP request steps and direct named tool calls.
-  MCP discovery may use protocol POSTs: read-only here describes the tool's
-  declared effect, not its transport method.
-- `tools: .denied` (`.noTools`) blocks mediated requests/tool calls and does
-  not connect to MCP servers to populate an agent's tools.
-- `WritePolicy` still authorizes permitted writes. Approval cannot override
-  a read-only, no-tools or local-only restriction. Policy violations are
-  configuration/control errors, not a reason to try another model.
+Apple on-device models, Vision OCR and MLX presets are local. Private Cloud
+Compute is remote. Other registrations default to unspecified; names and
+URLs are not proof of locality. These rules also cover fallback/decision
+factories. A policy violation does not activate fallback.
 
-On-device Apple models, Vision OCR and MLX presets are declared local.
-Private Cloud Compute is off-device and declared remote. Other registrations
-default to unspecified, rather than guessing trust from a name or URL.
+MCP read-only policy describes a tool's declared effect, not its HTTP
+transport: discovery may still use protocol POSTs.
 
-## Privacy propagation
+<a name="privacy-propagation"></a>
 
-Local-only restrictions accompany results, not just the generating step:
+## 🏷 Private results stay restricted
 
-- Explicit input references, handoff values, instruction templates and
-  request/tool argument templates inherit their referenced values' labels.
-- A branch inherits the privacy of its condition, not just its output text.
-  A parallel merge inherits all its children; an explicitly selected public
-  sibling can still be used independently.
-- A native conversation retains its most restrictive data label, including
-  failed attempts. A later step cannot forget the privacy of earlier history.
-- A custom body can read the original input and every result, so its output
-  conservatively inherits all those restrictions, even if it returns a
-  constant or uses an explicit public input. There is no automatic declassification.
+Local-only labels follow whole values through references, templates,
+handoffs and request/tool arguments. Selecting a field does not remove its label.
 
-Labels attach to whole step values. Selecting a field from a restricted
-dictionary does not automatically declassify that field.
+| Path | Label behavior |
+| --- | --- |
+| Branch | Inherits the condition's privacy |
+| Parallel merge | Inherits all children; an independent public sibling can still be selected |
+| Conversation | Retains the strictest history label, including failed attempts |
+| Custom body | Inherits all accessible data, even when returning a constant |
+| Default previous input | Still contributes its label when the instruction ignores it |
 
-The default previous-value flow is conservative: even an instruction or
-template that happens not to use its incoming value inherits its label.
-Select an independent public input/handoff when that is the intended flow.
-Per-step tool permissions do not taint unrelated later steps; data privacy does.
+There is no automatic declassification. Select an independent public
+input/handoff when that is the intended flow. Tool permissions are per-step;
+data privacy follows results.
 
-Step records expose `dataAccess` and the selected conversation name; reports
-expose `outputDataAccess`, including when `Workflow.output` selects an
-earlier result. Values themselves are unchanged. When passing a report's
-output to another run, the host must carry that label into its new executor
-policy (for example `executor.run(next, input: report.output,
-policy: WorkflowExecutionPolicy(data: report.outputDataAccess))`). This is not a
-general cross-process information-flow system: standalone `Value`s do not
-carry labels. Recoverable execution checkpoints preserve them within the
-same logical run; the host must protect and correctly bind those snapshots.
+`StepRecord.dataAccess` and `report.outputDataAccess` expose the labels,
+including a selected earlier output. Carry the report's label into another
+execution yourself:
 
-## Trust boundary and remaining work
+```swift
+let nextReport = try await executor.run(
+    next,
+    input: report.output,
+    policy: WorkflowExecutionPolicy(data: report.outputDataAccess)
+)
+```
 
-This is **not a sandbox, network firewall or automatic PII detector**.
-Providers declared local must actually be local. Host code, custom bodies,
-credential providers, observers and captured resources retain their authority.
-Mark private input with the executor's policy; a private step does not
-retroactively classify other copies of the original input.
+Standalone `Value` instances do not carry labels. Checkpoints preserve them
+within the same execution, provided the host protects and binds the snapshot.
 
-Read-only HTTP methods and MCP tool metadata must be trustworthy. A remote
-service can mislabel its effects; ModelRelay cannot prove that a GET or
-read-only-annotated tool does not write. Tool output is untrusted data,
-never an authorization change. Credentials remain request-only.
+<a name="trust-boundary-and-remaining-work"></a>
 
-The separate [recovery API](Recovery.md) supports checkpoint/approval/resume
-with a host-owned atomic durable store. There is no built-in persistence
-implementation, automatic context compaction, token/cost budget or MCP
-connection pool. These are not hidden promises of session reuse.
+## ⚠️ Know the trust boundary
 
-## Verification
+This is not a sandbox, firewall or PII detector.
 
-The macOS 27 / Swift 6.4 suite passes with Swift warnings-as-errors:
-198 core and 34 HTTP/provider/MCP test definitions (232 total). Tests use
-scripted native sessions and local HTTP/SSE fixtures, not live model calls.
-Coverage includes native session reuse, handoff isolation, model-specific
-fallback history, concurrent load cancellation, old tool revocation,
-policy inheritance, privacy propagation, blocked transports/factories and
-checkpoint restoration/failure safety. Recovery tests also verify retained
-Anthropic reasoning/tool history through actual providers with stubbed HTTP.
-The [execution safety layer](ExecutionSafety.md) adds strict preflight,
-retained typed failures, metadata-only events and resumable global limits.
-The standalone consumer exercises Codable context metadata and privacy
-labels without inference. MLX compilation is checked separately; GPU inference
-and real-provider behavior are not established by these offline tests.
+- Mark private **input** at the executor boundary; a private step does not
+  retroactively restrict every copy of that input.
+- Providers, custom bodies, callbacks and captured resources retain host authority.
+- Trust local registrations and read-only metadata; a service can mislabel its effects.
+- Treat tool output as data, never as new authorization. Credentials stay request-only.
+
+Persistent cross-run memory, automatic compaction and token/cost quotas are
+not provided. See [execution safety](ExecutionSafety.md) for attempt budgets
+and [recovery](Recovery.md) for durable state.
+
+<a name="verification"></a>
+
+## 🧪 What the tests establish
+
+Scripted native sessions and stubbed HTTP cover history, handoffs, fallback,
+load cancellation, tool rebinding, privacy and checkpoint restoration.
+They do not establish live-provider availability, GPU inference or the
+durability of your storage.

@@ -1,13 +1,16 @@
-# Retired compatibility experiment
+# 🗃 Retired runtime experiment
 
-The adapter/transcript bridge prototype has been retired. ModelRelay now
-uses AnyLanguageModel 1.0.0 natively, without the FoundationModels round trip.
-Its production HTTP-stub integration tests live in
-`Tests/ModelRelayNetworkTests/NativeProviderTests.swift`.
+[← README](../../README.md) · [Migration](../../Documentation/NativeRuntimeMigration.md)
 
-Removing the SDK's SwiftScript dependency removes the SwiftSyntax conflict;
-no patched AnyLanguageModel manifest or fork is required. Developer code is
-supplied directly through `Step.custom` closures.
+> 📣 Historical context, not a build recipe.
 
-See [migration notes](../../Documentation/NativeRuntimeMigration.md).
-The [alignment report](Alignment) is historical, not a current build recipe.
+The adapter/transcript bridge was replaced by native AnyLanguageModel 1.0.0.
+No patched fork or FoundationModels round trip is needed.
+
+| Looking for… | Go to… |
+| --- | --- |
+| Current integration tests | [NativeProviderTests.swift](../../Tests/ModelRelayNetworkTests/NativeProviderTests.swift) |
+| Developer-supplied logic | [Custom Swift steps](../../Documentation/Usage.md#custom-swift) |
+| The earlier dependency experiment | [Alignment report](Alignment/README.md) |
+
+SwiftScript and ShellKit are no longer SDK dependencies.

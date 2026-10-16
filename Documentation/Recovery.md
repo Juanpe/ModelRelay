@@ -1,213 +1,189 @@
-# Recoverable executions and approval gates
+# ⏸ Recovery and human review
 
-ModelRelay can pause a logical execution, return its state to the host, and
-resume in a new executor without replaying confirmed steps. This is an opt-in
-execution API, not a background service, database or exactly-once guarantee.
+[← README](../README.md) · [Execution safety](ExecutionSafety.md) · [Context](ContextAndPolicies.md)
 
-## Entry points
+Pause before a step, show the result to a person, then continue with a new
+executor. Confirmed steps are not replayed.
 
-- `start` creates a new execution ID and saves
-  its initial checkpoint before doing work.
-- `resume` continues that logical
-  run. A new executor can supply fresh credentials, transports and model factories.
-- `Step.requiringApproval(_:)` pauses **before** a top-level step or block.
-  It does not suspend a task while waiting for a person.
-- `confirmCompletion` lets the host
-  supply the verified result of an interrupted request, tool call, template
-  or custom leaf without rerunning it.
+[▶️ Start](#entry-points) · [👀 Review](#define-once-review-later) · [💾 Storage](#storage-contract-atomic-durable-compare-and-swap) · [🩺 Interruptions](#interrupted-operations-and-side-effects)
 
-`WorkflowExecutionOutcome` is either `.completed(WorkflowExecutionReport)`,
-`.awaitingApproval(WorkflowExecutionCheckpoint)` or
-`.rejected(WorkflowExecutionCheckpoint)`. Failures still throw. Approval gates
-used with ordinary `run` throw before any steps run; they are never silently ignored.
-Only top-level gates are supported. A nested gate is rejected before work
-or checkpoint creation; put the gate on the containing block instead.
+<a name="entry-points"></a>
 
-`Workflow` is the reusable definition, not its execution state. Separate calls
-to `start` have different `executionID`s even when they share a `workflowID`.
-Resuming keeps the same execution identity. Checkpoint JSON uses `executionID`;
-the earlier development-only identity key is not accepted as an alias. There
-are no compatibility typealiases for the previous API names.
+## ▶️ Pick the right entry point
 
-## Define once, review later
+| API | Purpose |
+| --- | --- |
+| `start` | New `executionID`; saves initial state before work |
+| `resume` | Continues that execution with fresh host integrations |
+| `requiringApproval` | Pauses before a top-level step/block |
+| `confirmCompletion` | Records an externally verified interrupted leaf without rerunning it |
+
+Outcomes are `.completed(report)`, `.awaitingApproval(checkpoint)` or
+`.rejected(checkpoint)`. Failures still throw. Ordinary `run` and nested
+approval gates are rejected before work; gate the containing block instead.
+
+A workflow is the definition. Each `start` creates a separate execution;
+`resume` keeps the same identity. This is not a database, scheduler or
+background-execution guarantee.
+
+<a name="define-once-review-later"></a>
+
+## 👀 Define once, review later
+
+Keep a stable `workflowID`. These snippets assume your host has a configured
+`executor`, durable `store` and incoming `message`:
 
 ```swift
-import Foundation
-import ModelRelay
-
-func reviewWorkflow(id: UUID) -> Workflow {
-    Workflow("Draft and send", id: id) {
-        Step.prompt("draft", "Write a concise support reply.", model: .appleOnDevice)
-        Step.request("send", HTTPRequest(.post, url: "https://support.example/replies",
-            headers: [.init("Authorization", "Bearer {{secret.API_KEY}}")],
-            body: #"{"text":"{{draft}}"}"#))
-            .requiringApproval("Review the reply before sending")
-    }
+let workflow = Workflow(
+    name: "Draft and send",
+    id: workflowID
+) {
+    Step.prompt("draft", "Write a concise support reply.", model: .appleOnDevice)
+    Step.request("send", HTTPRequest(.post, url: "https://support.example/replies",
+        headers: [.init("Authorization", "Bearer {{secret.API_KEY}}")],
+        body: #"{"text":"{{draft}}"}"#))
+        .requiringApproval("Review the reply before sending")
 }
 
-func beginReview(id: UUID, message: Value, executor: WorkflowExecutor,
-                 store: any WorkflowExecutionCheckpointStore) async throws -> WorkflowExecutionOutcome {
-    try await executor.start(reviewWorkflow(id: id), input: message,
-                           revision: "support-v1", store: store)
-}
-
-func finishReview(id: UUID, checkpoint: WorkflowExecutionCheckpoint,
-                  decision: ApprovalDecision, executor: WorkflowExecutor,
-                  store: any WorkflowExecutionCheckpointStore) async throws -> WorkflowExecutionOutcome {
-    try await executor.resume(reviewWorkflow(id: id), from: checkpoint,
-                            revision: "support-v1", approval: decision, store: store)
-}
+let outcome = try await executor.start(
+    workflow, input: message, revision: "support-v1", store: store
+)
 ```
 
-The host supplies storage, transport, secrets and an appropriate `WritePolicy`
-on the executor. It can show `checkpoint.results["draft"]`, `records`, `step`
-and `approval` in its own UI. `.approve` authorizes only the current checkpoint's
-gate; another gate needs another decision. `.reject` is terminal. An approval
-does **not** override `WritePolicy`, `.readOnly`, `.noTools` or `.localOnly`.
-Agent gates authorize entering the whole step, not each future model-selected
-tool request. Use `WritePolicy.ask` for individual live write approvals; that
-closure is not a durable pause inside an agent's tool loop.
+When `outcome` is `.awaitingApproval(checkpoint)`, show
+`checkpoint.results["draft"]`, `records`, `step` or `approval` in your UI.
+After the person approves, resume with that latest checkpoint:
 
-Calling `resume` without a decision on an approval checkpoint simply returns
-the pending approval. It does not call a model, resolve secrets or make a request.
-Use the latest checkpoint when applying a decision; stale decisions cannot
-claim a step if the store enforces its contract.
+```swift
+let outcome = try await executor.resume(
+    workflow, from: checkpoint, revision: "support-v1",
+    approval: .approve, store: store
+)
+```
 
-## Storage contract: atomic, durable compare-and-swap
+- Approval covers the current gate only; `.reject` is terminal.
+- No decision returns the pending approval without loading models, secrets or tools.
+- Tightened limits can create a newer generation; never approve a stale snapshot.
+- Configure transport, secrets and `WritePolicy` on the executor.
 
-Implement `WorkflowExecutionCheckpointStore.save(_:replacing:)` in the host. There is no
-filesystem/database implementation or storage dependency in the core.
+> 📣 Approval does not override write/privacy policy. Gating an agent approves
+> entering that step, not every future tool call. Use `WritePolicy.ask` for
+> live write decisions; it is not a durable pause inside an agent's tool loop.
 
-1. With `replacing: nil`, create a record keyed by `checkpoint.executionID` only
-   if it does not exist.
-2. Otherwise, replace it **only** if the stored generation equals the
-   supplied generation. If it differs, throw `RecoveryError.checkpointConflict`.
-3. Commit the complete new checkpoint atomically and durably **before returning**.
+<a name="storage-contract-atomic-durable-compare-and-swap"></a>
 
-A transactional database conditional update or an equivalent durable CAS
-operation is required. An actor with an unconditional write is insufficient;
-an in-memory actor serializes tasks but does not survive process termination.
-Production stores must coordinate across all workers/devices that may resume
-the same run, not just one executor instance.
+## 💾 Make saves atomic and durable
 
-ModelRelay saves a `running` claim before invoking a top-level step and saves
-the complete state after it succeeds. Two simultaneous resumes of the same
-checkpoint compete for that claim; only one may succeed. It also saves at
-approval and terminal boundaries. `onStep` is a live execution observer,
-**not** a durable-commit notification: it fires before the post-step save.
+Implement `WorkflowExecutionCheckpointStore.save(_:replacing:)`:
 
-After a save throws, reload the latest state from the host store: the save
-may have committed but its acknowledgement been lost. Never restore an old
-snapshot over a newer generation. Calling `start` again creates a different
-run, not an idempotent resume; deduplicating incoming jobs is host-owned.
+| `replacing` | Required operation |
+| --- | --- |
+| `nil` | Create by `executionID` only if absent |
+| A generation | Replace only if the stored generation matches |
+| Mismatch | Throw `RecoveryError.checkpointConflict` |
 
-## What is restored
+Commit the whole checkpoint atomically and durably **before returning**.
+Coordinate every worker/device that can resume that execution. An in-memory
+actor or unconditional overwrite does not satisfy this contract.
 
-Checkpoints are `Codable` and contain input, confirmed named values, privacy
-labels, previous value, step records, active execution policy, accumulated
-execution duration and named native conversation transcripts. Review time
-between invocations is not part of that duration. Model resources/weights,
-KV caches, open MCP connections and authorization callbacks are not serialized.
-Model factories load lazily again on resume.
+The executor saves a `running` claim before a top-level operation and confirms
+the state afterward. Competing resumes race for that claim; only one may win.
+It also saves approval and terminal boundaries.
 
-Schema 2 checkpoints also retain `WorkflowExecutionLimits` and confirmed
-`WorkflowExecutionUsage`. The old development snapshot shape is not migrated.
-Ceilings cannot be expanded on resume. For duration-limited leaf reconciliation,
-the host must supply `elapsed:` for the interrupted attempt; otherwise confirmation
-fails instead of silently dropping consumed time. See [ExecutionSafety](ExecutionSafety.md).
+> ⚠️ `onStep` fires before the post-step save. If saving throws, reload the
+> latest stored checkpoint: commit may have succeeded without acknowledgement.
+> Never overwrite a newer generation with an older snapshot.
 
-Native histories are restored only to their original conversation name and
-model ID, including provider-specific metadata. A new model ID or fallback
-has a separate lane; no cross-provider transcript translation is attempted.
-Current tools, value resolvers, write permission and call budgets are rebound
-for the new step. Restoring tool-call history does **not** execute those calls.
-The provider must support the restored transcript; it may reject stale opaque
-metadata, changed model versions or an oversized history. Compaction is not
-implemented. Do not silently move such a transcript to a different provider.
+Starting again creates a different execution. Deduplicating incoming jobs
+belongs to the host.
 
-The original execution policy cannot be relaxed by a new executor/run policy;
-new restrictions can narrow it. Value and conversation privacy labels survive
-JSON encoding and resumption. The new executor's catalog metadata and write
-policy still apply before new operations.
+<a name="what-is-restored"></a>
 
-## Definition identity and compiled custom bodies
+## 📦 Know what a checkpoint contains
 
-Keep the workflow UUID stable. A definition digest detects changed step order,
-instructions, models, context, policies, approvals and configured tool-kit data.
-Recovery also requires the same **nonempty host revision**.
+| Restored | Recreated by your host/provider |
+| --- | --- |
+| Input, confirmed results and previous value | Credentials and authorization callbacks |
+| Privacy labels, policy and step records | Model weights / KV caches |
+| Native named conversation transcripts | Open MCP connections |
+| Schema 2 limits, usage and accumulated active duration | Compiled custom bodies |
 
-Custom bodies remain compiled, in-memory Swift closures. Encoding a workflow
-containing them still throws. The host can reconstruct the workflow in Swift
-and restore only its serializable execution state. The digest binds custom-step
-positions/shape, not executable closure contents or captured objects. Bump the
-host revision whenever a body, capture, model configuration behind an ID,
-credential/account binding or other executable dependency changes. ModelRelay
-cannot detect those changes by inspecting code or factory closures.
+Resume only narrows policy/limits; it cannot relax the saved ceiling.
+Review time between invocations is excluded. For interrupted duration-limited
+work, `confirmCompletion` requires `elapsed:`.
+[Budget accounting →](ExecutionSafety.md#global-limits-and-usage)
 
-The digest is a change detector, **not authentication**. Load only trusted
-checkpoints bound by the host to the right account, workflow and deployment.
-Do not accept client-edited checkpoint JSON as authority to skip approval,
-weaken privacy labels or inject completed results.
+History returns to its original conversation name and model ID. Current tools,
+resolvers and budgets are rebound; restoring old tool history does not call
+those tools. Changed models, stale opaque metadata or large histories may be
+rejected by the provider. There is no automatic compaction or cross-provider
+transcript translation.
 
-## Interrupted operations and side effects
+<a name="definition-identity-and-compiled-custom-bodies"></a>
 
-| Stored status | Meaning | Safe next action |
-| --- | --- | --- |
-| `ready` | Previous top-level steps are confirmed | Resume at the next step |
-| `awaitingApproval` | Current step has not started | Review and approve/reject |
-| `running` | Current step may have partially or fully run | Reconcile externally; never automatic replay |
-| `completed` | Final state is confirmed | Read the report without executing steps |
-| `rejected` | The approval was rejected | No continuation |
+## 🪪 Keep identity stable
 
-A crash can occur after a remote write succeeds and before its result is
-saved. Timeout, cancellation and transport errors cannot distinguish that
-from a request that never reached the server. Even failures that look harmless
-leave a conservative `running` marker; `resume` throws
-`RecoveryError.interrupted(step:)` before loading a model or running any code.
+A definition digest checks step order, instructions, models, context, policies,
+gates and tool-kit configuration. Recovery also requires the same nonempty
+host revision and workflow UUID.
 
-Before reconciliation, the host must stop/fence the original worker and ensure
-it cannot continue executing tools. Merely seeing `running` does not prove
-that a worker has died; CAS does not cancel an already executing body or remote
-request. Do not manually confirm a step while its original worker is active.
+The digest sees custom-step shape, not executable closures or captured objects.
+Rebuild those bodies in Swift and bump the revision when code, captures,
+model configuration, credentials/account binding or executable dependencies change.
+The workflow definition itself remains non-serializable if it has closures.
 
-After independently verifying an interrupted leaf's remote/host result, call
-`confirmCompletion` with that result. It saves the value, marks its record
-`recovered`, preserves the step's privacy restrictions (and any stricter label
-the host supplies), and advances without invoking the operation. It does not
-query the remote service for you. Blocks and model/agent steps cannot be
-reconciled with one value: their child results or native transcript would be
-missing. Those runs require host-level reconciliation/termination instead.
+> 🔒 The digest detects changes; it is not authentication. Accept only trusted
+> checkpoints bound to the right account, workflow and deployment. Client-edited
+> JSON must not authorize skipping review, weakening labels or inventing results.
 
-Recovery boundaries are currently **top-level steps**. A conditional or
-parallel block is one unit: a fully confirmed block is skipped on resume,
-but interruption inside it cannot resume from an individual child. Completed
-child side effects within an interrupted block are not automatically replayed.
-This is deliberately more conservative than pretending the block is atomic
-at the remote services.
+Schema 2 does not migrate earlier development checkpoint shapes or identity
+aliases. See [migration notes](NativeRuntimeMigration.md).
 
-For writes, use a service-supported idempotency key or independently queryable
-business operation ID where possible. The host can pass that stable ID through
-workflow input/templates; ModelRelay does not invent protocol-specific keys,
-assume all services support them, or promise exactly-once remote execution.
+<a name="interrupted-operations-and-side-effects"></a>
 
-## Sensitive data and scope
+## 🩺 Reconcile before continuing
 
-The checkpoint does not contain executor secrets, prepared requests, credentials,
-compiled code or tool closures. It **does** contain potentially sensitive user
-input, model responses, tool outputs, images and native transcript metadata.
-A server/model can echo sensitive values in its output; there is no automatic
-DLP or redaction guarantee for arbitrary data. Encrypt/restrict access, bind
-the correct account, set retention and honor `.localOnly` when choosing storage.
-The store itself is trusted host code, not sandboxed or network-policed by
-ModelRelay. Provider API keys must never be embedded in workflow literals.
+| Stored status | Safe next action |
+| --- | --- |
+| `ready` | Resume the next top-level step |
+| `awaitingApproval` | Review, then approve/reject |
+| `running` | Stop/fence the worker and reconcile externally |
+| `completed` | Read the report without executing steps |
+| `rejected` | No continuation |
 
-There is no scheduler, durable token-stream continuation, live OS background
-execution guarantee, distributed job queue, automatic retry, MCP session pool
-or token/cost budget in this feature. An OS interruption still ends the current
-invocation; the host decides when another worker may resume.
+A remote write may succeed before its result is saved. Timeout, cancellation
+or transport failure cannot distinguish that from a request that never arrived.
+Even apparently harmless failures leave `running`; `resume` throws
+`RecoveryError.interrupted(step:)` before invoking code.
 
-The offline tests cover JSON restoration with a new executor, custom-body
-reconstruction, native tool/Anthropic reasoning history, no secret capture,
-policy retention, duplicate claims, approval/rejection and save failures both
-before commit and after acknowledgement loss. They do not establish the
-durability of a host's production store or a real provider's availability.
+1. **Stop/fence the old worker.** A `running` marker does not prove it died;
+   compare-and-swap does not cancel an active body or remote request.
+2. **Verify the result externally.** Use a service's idempotency key or
+   queryable business operation ID where available.
+3. **Confirm only a supported leaf.** Request, named tool, template or custom
+   steps can use `confirmCompletion` with a verified value and required elapsed time.
+
+Confirmation marks the record `recovered`, preserves privacy restrictions
+and advances without calling the operation. It does not query the service.
+Blocks and model/agent steps need child results or native history, so one
+value cannot reconcile them; handle termination/reconciliation in the host.
+
+Recovery boundaries are top-level steps. An interrupted branch/parallel block
+cannot resume from a child; completed child writes are not automatically replayed.
+
+<a name="sensitive-data-and-scope"></a>
+
+## 🔒 Protect the stored state
+
+Checkpoints omit executor credentials, prepared requests, executable bodies
+and tool closures. They can contain user input, images, model/tool output,
+transcripts and echoed sensitive data.
+
+Encrypt/restrict access, bind accounts, set retention and honor local-only
+restrictions when choosing storage. The store is trusted host code, not
+sandboxed by the executor. Never put API keys in workflow literals.
+
+There is no exactly-once guarantee, automatic replay, distributed queue or
+durable token stream. The host decides when another worker may resume.
+Offline tests cover restoration, claims, policies and lost acknowledgements,
+not your production store's durability or live-provider availability.
