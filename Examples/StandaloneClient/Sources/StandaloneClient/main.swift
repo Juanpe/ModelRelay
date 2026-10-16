@@ -24,12 +24,17 @@ guard workflow.referenceIssues.isEmpty else {
 let executor = WorkflowExecutor()
 let issues = await executor.validate(workflow)
 precondition(issues.isEmpty)
-let report = try await executor.run(workflow, input: .text("Small models can power focused workflows."),
-    limits: .init(maxModelCalls: usesApple ? 1 : 0, maxToolCalls: 0, maxConcurrentSteps: 2),
-    onStep: { record in print("Finished \(record.step)") },
-    onEvent: { event in
+let execution = executor.stream(workflow, input: .text("Small models can power focused workflows."),
+    limits: .init(maxModelCalls: usesApple ? 1 : 0, maxToolCalls: 0, maxConcurrentSteps: 2))
+defer { execution.cancel() }
+for try await update in execution {
+    switch update {
+    case .step(let record): print("Finished \(record.step)")
+    case .event(let event):
         if event.kind == .executionCompleted { print("Completed execution \(event.executionID)") }
-    })
+    }
+}
+let report = try await execution.result
 print(report.output.textValue)
 precondition(report.usage.modelCalls == (usesApple ? 1 : 0))
 

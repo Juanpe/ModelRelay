@@ -131,7 +131,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         #expect(await store.saves.isEmpty)
     }
 
-    @Test func eachGateNeedsItsOwnApprovalAndCallbacksDoNotReplay() async throws {
+    @Test func eachGateNeedsItsOwnApprovalAndStreamedRecordsDoNotReplay() async throws {
         let store = MemoryCheckpoints()
         let observed = Mutex<[String]>([])
         let workflow = Workflow("Two gates") {
@@ -140,11 +140,11 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         }
         let executor = WorkflowExecutor()
         let first = try paused(await executor.start(workflow, input: .null, revision: "1", store: store))
-        let second = try paused(await executor.resume(workflow, from: first, revision: "1", approval: .approve, store: store,
-                                                   onStep: { record in observed.withLock { $0.append(record.step) } }))
+        let second = try paused(await executor.resumeStream(workflow, from: first, revision: "1", approval: .approve, store: store)
+            .observing(onStep: { record in observed.withLock { $0.append(record.step) } }))
         #expect(second.step == "second")
-        _ = try completed(await executor.resume(workflow, from: second, revision: "1", approval: .approve, store: store,
-                                             onStep: { record in observed.withLock { $0.append(record.step) } }))
+        _ = try completed(await executor.resumeStream(workflow, from: second, revision: "1", approval: .approve, store: store)
+            .observing(onStep: { record in observed.withLock { $0.append(record.step) } }))
         #expect(observed.withLock { $0 } == ["first", "second"])
     }
 
@@ -199,7 +199,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         }
         let store = MemoryCheckpoints(failBefore: generation)
         await #expect(throws: StoreFailure.self) {
-            try await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store)
+            try await WorkflowExecutor().startStream(workflow, input: .null, revision: "1", store: store).observing()
         }
         #expect(calls.withLock { $0 } == 0)
         if generation == 1 {
@@ -231,7 +231,19 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
             Step.template("format", "Created {{create.id}}")
         }
         let executor = WorkflowExecutor(requests: server, writePolicy: .allow)
-        await #expect(throws: StoreFailure.self) { try await executor.start(workflow, input: .null, revision: "1", store: store) }
+        let execution = executor.startStream(workflow, input: .null, revision: "1", store: store)
+        let records = Mutex<[StepRecord]>([])
+        let savedGenerations = Mutex<[Int]>([])
+        await #expect(throws: StoreFailure.self) {
+            try await execution.observing(
+                onStep: { record in records.withLock { $0.append(record) } },
+                onEvent: { event in
+                    if let generation = event.checkpointGeneration { savedGenerations.withLock { $0.append(generation) } }
+                })
+        }
+        await #expect(throws: StoreFailure.self) { try await execution.result }
+        #expect(records.withLock { $0.map(\.step) } == ["create"])
+        #expect(savedGenerations.withLock { $0 } == [0, 1])
         let interrupted = try await store.latest()
         #expect(interrupted.status == .running)
         await #expect(throws: RecoveryError.interrupted(step: "create")) {
@@ -256,13 +268,43 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         let workflow = Workflow("Lost ack") {
             Step.custom("effect") { _ in calls.withLock { $0 += 1 }; return .text("done") }
         }
+        let generations = Mutex<[Int]>([])
         await #expect(throws: StoreFailure.self) {
-            try await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store)
+            try await WorkflowExecutor().startStream(workflow, input: .null, revision: "1", store: store)
+                .observing(onEvent: { event in
+                    if let generation = event.checkpointGeneration { generations.withLock { $0.append(generation) } }
+                })
         }
+        #expect(generations.withLock { $0 } == [0, 1])
         let checkpoint = try await store.latest()
         #expect(checkpoint.status == .completed)
         let report = try completed(await WorkflowExecutor().resume(workflow, from: checkpoint, revision: "1", store: store))
         #expect(report.output == .text("done"))
+        #expect(calls.withLock { $0 } == 1)
+    }
+
+    @Test func cancellingARecoverableStreamKeepsItsRunningClaim() async throws {
+        let calls = Mutex(0)
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        let workflow = Workflow(name: "Interrupted stream") {
+            Step.custom("effect") { _ in
+                calls.withLock { $0 += 1 }
+                continuation.yield(); continuation.finish()
+                try await Task.sleep(for: .seconds(10))
+                return .text("done")
+            }
+        }
+        let store = MemoryCheckpoints()
+        let executor = WorkflowExecutor()
+        let execution = executor.startStream(workflow, input: .null, revision: "1", store: store)
+        for await _ in started { break }
+        execution.cancel()
+        await #expect(throws: CancellationError.self) { try await execution.result }
+        let checkpoint = try await store.latest()
+        #expect(checkpoint.status == .running)
+        await #expect(throws: RecoveryError.interrupted(step: "effect")) {
+            try await executor.resumeStream(workflow, from: checkpoint, revision: "1", store: store).observing()
+        }
         #expect(calls.withLock { $0 } == 1)
     }
 

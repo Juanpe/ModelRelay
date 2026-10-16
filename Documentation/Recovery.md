@@ -18,6 +18,9 @@ executor. Confirmed steps are not replayed.
 | `requiringApproval` | Pauses before a top-level step/block |
 | `confirmCompletion` | Records an externally verified interrupted leaf without rerunning it |
 
+For progress updates, use `startStream` / `resumeStream`; their `result`
+returns the same outcome. See [streaming and cancellation](ExecutionSafety.md#metadata-only-execution-events).
+
 Outcomes are `.completed(report)`, `.awaitingApproval(checkpoint)` or
 `.rejected(checkpoint)`. Failures still throw. Ordinary `run` and nested
 approval gates are rejected before work; gate the containing block instead.
@@ -90,7 +93,7 @@ The executor saves a `running` claim before a top-level operation and confirms
 the state afterward. Competing resumes race for that claim; only one may win.
 It also saves approval and terminal boundaries.
 
-> ⚠️ `onStep` fires before the post-step save. If saving throws, reload the
+> ⚠️ A streamed step record is not a commit receipt. If saving throws, reload the
 > latest stored checkpoint: commit may have succeeded without acknowledgement.
 > Never overwrite a newer generation with an older snapshot.
 

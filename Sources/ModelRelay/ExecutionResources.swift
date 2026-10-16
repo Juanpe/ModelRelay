@@ -20,7 +20,7 @@ private struct CurrentStepInstructions: DynamicInstructions, Sendable {
 
 struct NativeConversation: Sendable {
     let session: LanguageModelSession
-    let tools: StepTools
+    let tools: StepTools?
 }
 
 /// One run owns its model factories and native conversations. Never global,
@@ -33,8 +33,10 @@ actor ExecutionResources {
     private var privacy: [Key: WorkflowExecutionPolicy.DataAccess] = [:]
     private var busy: Set<Key> = []
     private var restored: [Key: CheckpointConversation] = [:]
+    private let dynamicInstructions: Bool?
 
-    init(conversations: [CheckpointConversation] = []) {
+    init(conversations: [CheckpointConversation] = [], dynamicInstructions: Bool? = nil) {
+        self.dynamicInstructions = dynamicInstructions
         for item in conversations {
             let key = Key(name: item.name, model: item.model)
             restored[key] = item
@@ -81,14 +83,24 @@ actor ExecutionResources {
         let conversation: NativeConversation
         if let key, let existing = conversations[key] { conversation = existing }
         else {
-            let state = StepTools()
             let history = key.flatMap { restored[$0]?.transcript } ?? Transcript()
-            let session = LanguageModelSession(model: backend, dynamicInstructions: CurrentStepInstructions(state: state), history: history)
+            let session: LanguageModelSession
+            let state: StepTools?
+            if dynamicInstructions ?? Self.supportsDynamicInstructions(backend) {
+                let binding = StepTools()
+                session = LanguageModelSession(model: backend, dynamicInstructions: CurrentStepInstructions(state: binding), history: history)
+                state = binding
+            } else {
+                // OS 26's Apple provider needs fixed tools; retain native history, not stale wrappers.
+                let history = Transcript(entries: history.filter { if case .instructions = $0 { false } else { true } })
+                session = LanguageModelSession(model: backend, tools: tools, transcript: history)
+                state = nil
+            }
             session.transcriptErrorHandlingPolicy = .revertTranscript
             conversation = NativeConversation(session: session, tools: state)
             if let key { conversations[key] = conversation; restored.removeValue(forKey: key) }
         }
-        conversation.tools.tools = tools
+        conversation.tools?.tools = tools
         if let key {
             busy.insert(key)
             // Restrict even on failure: a provider/session may have seen data.
@@ -98,14 +110,28 @@ actor ExecutionResources {
     }
 
     func release(_ context: StepContext?, model: ModelID, conversation: NativeConversation) {
-        conversation.tools.tools = []
-        if case .conversation(let name) = context { busy.remove(Key(name: name, model: model)) }
+        conversation.tools?.tools = []
+        if case .conversation(let name) = context {
+            let key = Key(name: name, model: model)
+            if conversation.tools == nil {
+                restored[key] = CheckpointConversation(name: name, model: model,
+                    transcript: conversation.session.transcript, data: privacy[key] ?? .unrestricted)
+                conversations.removeValue(forKey: key)
+            }
+            busy.remove(key)
+        }
+    }
+
+    private static func supportsDynamicInstructions(_ backend: any LanguageModel) -> Bool {
+        if #available(macOS 27, iOS 27, visionOS 27, *) { return true }
+        if #available(macOS 26, iOS 26, visionOS 26, *), backend is SystemLanguageModel { return false }
+        return true
     }
 
     func finish() async {
         for resource in models.values { await resource.finish() }
         for resource in decisions.values { await resource.finish() }
-        for conversation in conversations.values { conversation.tools.tools = [] }
+        for conversation in conversations.values { conversation.tools?.tools = [] }
         models.removeAll(); decisions.removeAll(); conversations.removeAll(); privacy.removeAll(); busy.removeAll(); restored.removeAll()
     }
 }

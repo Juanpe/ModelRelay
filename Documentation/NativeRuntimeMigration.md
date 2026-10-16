@@ -17,6 +17,8 @@ AnyLanguageModel **1.0.0** release. No patched fork or transcript bridge is need
 
 Apple models use the upstream integrations. Vision OCR implements the native
 AnyLanguageModel protocol.
+The core now targets iOS 18, macOS 15 and visionOS 2; newer Apple capabilities
+are availability-gated. [Platform requirements →](../README.md#installation)
 
 <a name="api-changes"></a>
 
@@ -31,7 +33,11 @@ AnyLanguageModel protocol.
 | `RunCheckpoint` / `RunCheckpointStore` | `WorkflowExecutionCheckpoint` / `WorkflowExecutionCheckpointStore` |
 | `RunReport` / `RunOutcome` | `WorkflowExecutionReport` / `WorkflowExecutionOutcome` |
 | `ExecutionPolicy` / `runID` | `WorkflowExecutionPolicy` / `executionID` |
+| `onEvent:` / `onStep:` callbacks | `stream` / `startStream` / `resumeStream`, then `for try await` and `result` |
 | Source-string script steps | Compiled `Step.custom` bodies |
+
+Streaming is [single-consumer and cancellation-aware](ExecutionSafety.md#metadata-only-execution-events).
+Direct `run` / `start` / `resume` still return their result without progress callbacks.
 
 Import and declare AnyLanguageModel in clients that construct providers.
 `ModelRelayCloud` now supplies specialized decisions such as Jev, not general

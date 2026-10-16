@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "StandaloneClient",
-    platforms: [.macOS(.v27)],
+    platforms: [.macOS(.v15)],
     dependencies: [
         // Use the sibling SDK checkout. No MLX trait or optional products.
         .package(path: "../..", traits: []),

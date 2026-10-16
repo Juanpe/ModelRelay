@@ -44,8 +44,7 @@ public struct StepRecord: Codable, Sendable, Hashable {
     /// was about, or the request it sent with secrets hidden. Nil for steps
     /// that read nothing of their own.
     public var input: String? = nil
-    /// Why the step failed. Only on the record of the step a run stopped at,
-    /// which the observer receives before the run throws.
+    /// Why the step failed. The stream yields this record before throwing.
     public var failure: String? = nil
     public var failureInfo: WorkflowFailureInfo? = nil
 }
@@ -93,14 +92,25 @@ public actor WorkflowExecutor {
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
-    /// `onStep` is called as each step finishes, is skipped or fails (the step
-    /// a run stops at gets a record with `failure` before the run throws), so a
-    /// caller keeps what ran, shows progress live, and can say why it stopped.
     public func run(_ workflow: Workflow, input: Value,
                     policy: WorkflowExecutionPolicy = .unrestricted,
-                    limits: WorkflowExecutionLimits = .unlimited,
-                    onStep: (@Sendable (StepRecord) -> Void)? = nil,
-                    onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)? = nil) async throws -> WorkflowExecutionReport {
+                    limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionReport {
+        try await runObserved(workflow, input: input, policy: policy, limits: limits, onStep: nil, onEvent: nil)
+    }
+
+    /// Starts immediately; consume updates once and await `result` for the report.
+    public nonisolated func stream(_ workflow: Workflow, input: Value,
+                                   policy: WorkflowExecutionPolicy = .unrestricted,
+                                   limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionReport> {
+        WorkflowExecutionStream { onStep, onEvent in
+            try await self.runObserved(workflow, input: input, policy: policy, limits: limits, onStep: onStep, onEvent: onEvent)
+        }
+    }
+
+    private func runObserved(_ workflow: Workflow, input: Value,
+                             policy: WorkflowExecutionPolicy, limits: WorkflowExecutionLimits,
+                             onStep: (@Sendable (StepRecord) -> Void)?,
+                             onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionReport {
         try workflow.validateContexts()
         try workflow.validateApprovals(recoverable: false)
         try preflight(workflow)
@@ -788,9 +798,25 @@ extension WorkflowExecutor {
     /// A checkpoint is saved BEFORE every top-level step and AFTER it finishes.
     public func start(_ workflow: Workflow, input: Value, revision: String,
                       policy: WorkflowExecutionPolicy = .unrestricted, store: any WorkflowExecutionCheckpointStore,
-                      limits: WorkflowExecutionLimits = .unlimited,
-                      onStep: (@Sendable (StepRecord) -> Void)? = nil,
-                      onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)? = nil) async throws -> WorkflowExecutionOutcome {
+                      limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionOutcome {
+        try await startObserved(workflow, input: input, revision: revision, policy: policy, store: store,
+                                limits: limits, onStep: nil, onEvent: nil)
+    }
+
+    /// Streams a recoverable start; the result may pause for approval.
+    public nonisolated func startStream(_ workflow: Workflow, input: Value, revision: String,
+                                        policy: WorkflowExecutionPolicy = .unrestricted, store: any WorkflowExecutionCheckpointStore,
+                                        limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
+        WorkflowExecutionStream { onStep, onEvent in
+            try await self.startObserved(workflow, input: input, revision: revision, policy: policy, store: store,
+                                         limits: limits, onStep: onStep, onEvent: onEvent)
+        }
+    }
+
+    private func startObserved(_ workflow: Workflow, input: Value, revision: String,
+                               policy: WorkflowExecutionPolicy, store: any WorkflowExecutionCheckpointStore,
+                               limits: WorkflowExecutionLimits, onStep: (@Sendable (StepRecord) -> Void)?,
+                               onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionOutcome {
         let definition = try recoveryDefinition(workflow, revision: revision)
         let policy = self.policy.combined(with: policy)
         try self.limits.validate(); try limits.validate()
@@ -823,9 +849,27 @@ extension WorkflowExecutor {
     public func resume(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
                        approval: ApprovalDecision? = nil, policy: WorkflowExecutionPolicy = .unrestricted,
                        store: any WorkflowExecutionCheckpointStore,
-                       limits: WorkflowExecutionLimits = .unlimited,
-                       onStep: (@Sendable (StepRecord) -> Void)? = nil,
-                       onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)? = nil) async throws -> WorkflowExecutionOutcome {
+                       limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionOutcome {
+        try await resumeObserved(workflow, from: checkpoint, revision: revision, approval: approval, policy: policy,
+                                 store: store, limits: limits, onStep: nil, onEvent: nil)
+    }
+
+    /// Streams a resume without replaying confirmed step records.
+    public nonisolated func resumeStream(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
+                                         approval: ApprovalDecision? = nil, policy: WorkflowExecutionPolicy = .unrestricted,
+                                         store: any WorkflowExecutionCheckpointStore,
+                                         limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
+        WorkflowExecutionStream { onStep, onEvent in
+            try await self.resumeObserved(workflow, from: checkpoint, revision: revision, approval: approval, policy: policy,
+                                          store: store, limits: limits, onStep: onStep, onEvent: onEvent)
+        }
+    }
+
+    private func resumeObserved(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
+                                approval: ApprovalDecision?, policy: WorkflowExecutionPolicy,
+                                store: any WorkflowExecutionCheckpointStore, limits: WorkflowExecutionLimits,
+                                onStep: (@Sendable (StepRecord) -> Void)?,
+                                onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionOutcome {
         try validate(checkpoint, workflow: workflow, revision: revision)
         if checkpoint.status == .running { throw RecoveryError.interrupted(step: workflow.steps[checkpoint.nextStep].name) }
         if approval != nil, checkpoint.status != .awaitingApproval {

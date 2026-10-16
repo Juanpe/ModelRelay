@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#installation"><img src="https://img.shields.io/badge/Swift-6.4-F05138?logo=swift&logoColor=white" alt="Swift 6.4"></a>
-  <a href="#installation"><img src="https://img.shields.io/badge/Apple_platforms-27%2B-222222?logo=apple" alt="iOS, macOS and visionOS 27+"></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/Apple-iOS_18%2B_%7C_macOS_15%2B_%7C_visionOS_2%2B-222222?logo=apple" alt="iOS 18+, macOS 15+ and visionOS 2+"></a>
   <a href="#installation"><img src="https://img.shields.io/badge/Swift_Package_Manager-compatible-4BC51D" alt="Swift Package Manager compatible"></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT license"></a>
 </p>
@@ -53,8 +53,18 @@ Let's build something 🙂
 
 ## 📲 Installation
 
-You'll need **Xcode 27 / Swift 6.4** and **iOS, macOS or visionOS 27+**.
-This package currently targets Apple platforms, not Linux.
+Build with **Xcode 27 / Swift 6.4**. Your app can target **iOS 18+,
+macOS 15+ or visionOS 2+**. This package currently targets Apple platforms, not Linux.
+
+| Capability | Minimum OS |
+| --- | --- |
+| Workflows, remote models, tools, MCP and checkpoints | iOS 18 / macOS 15 / visionOS 2 |
+| Apple's on-device text model and tools | iOS 26 / macOS 26 / visionOS 26 |
+| Apple model image input and Private Cloud Compute | iOS 27 / macOS 27 / visionOS 27 |
+
+Apple models also need compatible hardware and model availability.
+Private Cloud Compute requires its entitlement. Use another registered
+provider on older systems, or configure an explicit fallback.
 
 Add ModelRelay with Swift Package Manager:
 
@@ -64,7 +74,7 @@ import PackageDescription
 
 let package = Package(
     name: "MyClient",
-    platforms: [.macOS(.v27), .iOS(.v27), .visionOS(.v27)],
+    platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     dependencies: [
         .package(url: "https://github.com/Juanpe/ModelRelay.git", branch: "main", traits: []),
     ],
@@ -273,13 +283,24 @@ let executor = WorkflowExecutor(limits: .init(
 ))
 
 let issues = await executor.validate(workflow)
-let report = try await executor.run(workflow, input: .text("Your input"),
-    onEvent: { event in print(event.kind.rawValue, event.step ?? "") })
+let execution = executor.stream(workflow, input: .text("Your input"))
+defer { execution.cancel() }
+
+for try await update in execution {
+    switch update {
+    case .event(let event): print(event.kind.rawValue, event.step ?? "")
+    case .step(let record): print("Finished", record.step)
+    }
+}
+
+let report = try await execution.result
+print(report.usage.modelCalls, report.usage.toolCalls)
 ```
 
 Validation runs automatically before execution; call `validate` when you
 want diagnostics ahead of time. Events contain metadata, not prompts,
 tool arguments or results. Step records can contain user data.
+Only need the report? Keep using `try await executor.run(...)`.
 
 Writes are denied by default. Supply a `WritePolicy` for approval and use
 `.localOnly`, `.readOnly` or `.noTools` policies to narrow what a workflow can do.

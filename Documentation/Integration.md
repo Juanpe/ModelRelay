@@ -13,6 +13,7 @@ you keep the interface, accounts and storage.
 
 Build a `Workflow`, pass a `Value`, then call `WorkflowExecutor.run`.
 You receive a `WorkflowExecutionReport` or a typed error.
+Use `stream` when you also want live progress, then await `execution.result`.
 
 | Integration | You supply | Optional implementation |
 | --- | --- | --- |
@@ -72,11 +73,15 @@ Pass selected values, not another provider's opaque transcript.
 Execution validates definitions automatically. Use `validate` for diagnostics
 before work; credentials, model readiness and remote schemas remain runtime checks.
 
+Built-in Apple IDs remain registered on older systems. Unsupported OS versions
+produce `.modelUnavailable`; an explicitly configured fallback can run if policy permits.
+See the [platform matrix](../README.md#installation).
+
 - Parallel children read the same snapshot. Results merge in declaration
-  order; `onStep` callbacks may arrive in completion order.
-- Callbacks are `@Sendable`, not UI-actor code. Keep full records yourself
-  when you need partial progress after a thrown run.
-- Step records may contain user input/output. `onEvent` carries metadata instead.
+  order; streamed step records may arrive in completion order.
+- Consume updates with `for try await` in your own task. Keep records yourself
+  when you need partial progress after a thrown execution.
+- `.step` records may contain user input/output; `.event` carries metadata only.
 - There is one fallback per model step, no automatic request/tool replay,
   and no fallback after a host tool attempt.
 

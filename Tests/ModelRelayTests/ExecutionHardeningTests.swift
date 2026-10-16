@@ -70,7 +70,7 @@ private actor ConcurrencyProbe {
         #expect(issues.contains { $0.step == "Output" })
         let events = Mutex<[WorkflowExecutionEvent]>([])
         await #expect(throws: WorkflowValidationError(issues: issues)) {
-            try await executor.run(workflow, input: .null, onEvent: { event in events.withLock { $0.append(event) } })
+            try await executor.stream(workflow, input: .null).observing(onEvent: { event in events.withLock { $0.append(event) } })
         }
         #expect(calls.withLock { $0 } == 0)
         #expect(server.requests.isEmpty)
@@ -111,9 +111,9 @@ private actor ConcurrencyProbe {
         let model = ScriptedModel("model", replies: [nil])
         let records = Mutex<[StepRecord]>([])
         do {
-            _ = try await WorkflowExecutor(catalog: .scripted(["model": model])).run(
-                Workflow("Fail") { Step.prompt("ask", "PRIVATE_PROMPT", model: "model") }, input: .null,
-                onStep: { record in records.withLock { $0.append(record) } })
+            _ = try await WorkflowExecutor(catalog: .scripted(["model": model])).stream(
+                Workflow("Fail") { Step.prompt("ask", "PRIVATE_PROMPT", model: "model") }, input: .null)
+                .observing(onStep: { record in records.withLock { $0.append(record) } })
             Issue.record("expected failure")
         } catch RelayError.operationFailed(let step, let failure) {
             #expect(step == "ask")
@@ -194,7 +194,7 @@ private actor ConcurrencyProbe {
         }
         let report = try await WorkflowExecutor(catalog: .scripted(["primary": primary, "backup": backup]), requests: server,
             secrets: FakeSecrets(values: ["KEY": "SECRET_TOKEN"]))
-            .run(workflow, input: .text("PRIVATE_INPUT"), onEvent: { event in events.withLock { $0.append(event) } })
+            .stream(workflow, input: .text("PRIVATE_INPUT")).observing(onEvent: { event in events.withLock { $0.append(event) } })
         let all = events.withLock { $0 }
         #expect(all.first?.kind == .executionStarted)
         #expect(all.last?.kind == .executionCompleted)
@@ -287,8 +287,8 @@ private actor ConcurrencyProbe {
         let workflow = Workflow("Deadline") { Step.prompt("ask", "Q", model: "primary", fallback: "fallback") }
         await #expect(throws: RelayError.limitExceeded(.duration)) {
             try await WorkflowExecutor(catalog: .scripted(["primary": primary, "fallback": fallback]))
-                .run(workflow, input: .null, limits: .init(maxDuration: .milliseconds(40)),
-                     onEvent: { event in events.withLock { $0.append(event) } })
+                .stream(workflow, input: .null, limits: .init(maxDuration: .milliseconds(40)))
+                .observing(onEvent: { event in events.withLock { $0.append(event) } })
         }
         #expect(fallback.callCount == 0)
         #expect(events.withLock { $0.contains { $0.kind == .limitReached && $0.limit == .duration } })
@@ -345,15 +345,17 @@ private actor ConcurrencyProbe {
         let events = Mutex<[WorkflowExecutionEvent]>([])
         let store = HardeningStore()
         let outcome = try await WorkflowExecutor(catalog: catalog, limits: .init(maxModelCalls: 1))
-            .start(workflow, input: .null, revision: "1", store: store, onEvent: { event in events.withLock { $0.append(event) } })
+            .startStream(workflow, input: .null, revision: "1", store: store)
+            .observing(onEvent: { event in events.withLock { $0.append(event) } })
         guard case .awaitingApproval(let checkpoint) = outcome else { Issue.record("expected pause"); return }
         #expect(checkpoint.usage.modelCalls == 1)
         #expect(checkpoint.limits.maxModelCalls == 1)
         #expect(events.withLock { $0.last?.kind } == .approvalRequired)
         let oldInvocation = events.withLock { $0.first?.invocationID }
         await #expect(throws: RelayError.limitExceeded(.modelCalls)) {
-            try await WorkflowExecutor(catalog: catalog).resume(workflow, from: checkpoint, revision: "1", approval: .approve,
-                store: store, limits: .init(maxModelCalls: 99), onEvent: { event in events.withLock { $0.append(event) } })
+            try await WorkflowExecutor(catalog: catalog).resumeStream(workflow, from: checkpoint, revision: "1", approval: .approve,
+                store: store, limits: .init(maxModelCalls: 99))
+                .observing(onEvent: { event in events.withLock { $0.append(event) } })
         }
         #expect(model.callCount == 1)
         let saved = try await store.latest()
@@ -367,12 +369,12 @@ private actor ConcurrencyProbe {
         let workflow = Workflow("Gated") { Step.template("gate", "value").requiringApproval("Review") }
         let events = Mutex<[WorkflowExecutionEvent]>([])
         let store = HardeningStore()
-        let pending = try await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store,
-            onEvent: { event in events.withLock { $0.append(event) } })
+        let pending = try await WorkflowExecutor().startStream(workflow, input: .null, revision: "1", store: store)
+            .observing(onEvent: { event in events.withLock { $0.append(event) } })
         guard case .awaitingApproval(let checkpoint) = pending else { Issue.record("expected pause"); return }
         #expect(events.withLock { $0.map(\.kind) } == [.executionStarted, .checkpointSaved, .checkpointSaved, .approvalRequired])
-        _ = try await WorkflowExecutor().resume(workflow, from: checkpoint, revision: "1", approval: .reject, store: store,
-            onEvent: { event in events.withLock { $0.append(event) } })
+        _ = try await WorkflowExecutor().resumeStream(workflow, from: checkpoint, revision: "1", approval: .reject, store: store)
+            .observing(onEvent: { event in events.withLock { $0.append(event) } })
         #expect(events.withLock { $0.last?.kind } == .approvalRejected)
         #expect(events.withLock { !$0.contains { $0.kind == .stepStarted } })
     }
@@ -429,7 +431,7 @@ private actor ConcurrencyProbe {
         let records = Mutex<[StepRecord]>([])
         do {
             _ = try await WorkflowExecutor(requests: server, secrets: FakeSecrets(values: ["KEY": key]))
-                .run(workflow, input: .null, onStep: { record in records.withLock { $0.append(record) } })
+                .stream(workflow, input: .null).observing(onStep: { record in records.withLock { $0.append(record) } })
             Issue.record("expected failure")
         } catch RelayError.operationFailed(_, let failure) {
             #expect(failure.info.category == .authenticationRequired)

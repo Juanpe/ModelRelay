@@ -6,7 +6,7 @@ import PackageDescription
 /// AnyLanguageModel provides the native inference and conversation runtime.
 let package = Package(
     name: "ModelRelay",
-    platforms: [.macOS(.v27), .iOS(.v27), .visionOS(.v27)],
+    platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     products: [
         .library(name: "ModelRelay", targets: ["ModelRelay"]),
         // Optional convenience catalog for native AnyLanguageModel MLX providers.

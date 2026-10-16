@@ -94,8 +94,11 @@ extension NetworkTests {
         let workflow = Workflow("Authentication") { Step.useTool("lookup", kit: "linear", tool: "lookup") }
         let events = Mutex<[WorkflowExecutionEvent]>([])
         do {
-            _ = try await WorkflowExecutor(toolKits: [linear], toolServers: connector).run(workflow, input: .null,
-                onEvent: { event in events.withLock { $0.append(event) } })
+            let execution = WorkflowExecutor(toolKits: [linear], toolServers: connector).stream(workflow, input: .null)
+            for try await update in execution {
+                if case .event(let event) = update { events.withLock { $0.append(event) } }
+            }
+            _ = try await execution.result
             Issue.record("expected sign in")
         } catch RelayError.operationFailed(_, let failure) {
             #expect(failure.info.category == .authenticationRequired)

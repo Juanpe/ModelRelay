@@ -17,10 +17,13 @@ belong in the host, not this package.
 5. Keep secrets, downloads and network implementations out of the core.
    Providers come from AnyLanguageModel; optional network products stay separate.
 6. Swift 6.4, strict concurrency, no warnings, `ExistentialAny`.
+   Support iOS 18, macOS 15 and visionOS 2; availability-gate newer Apple APIs.
 7. Test behavior through `ScriptedModel`'s real native session path.
    Use `StubProtocol` for networking; no live server or key in default tests.
 8. Credentials stay request-only, never in prompts, records or descriptions.
    Non-GET writes require an explicit `WritePolicy` and are never retried.
+9. Expose progress through async sequences, not notification callbacks.
+   Keep cancellation, final results and metadata-only events explicit.
 
 ## ✍️ Documentation style
 

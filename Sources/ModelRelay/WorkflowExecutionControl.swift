@@ -67,8 +67,7 @@ public struct WorkflowExecutionEvent: Codable, Sendable, Hashable {
     public let limit: WorkflowExecutionLimit?
 }
 
-/// The observer is synchronous/serialized; keep it short and do UI work on
-/// your own actor. It is not a durable event log or token stream.
+/// Serializes metadata emission and shares budgets across parallel branches.
 final class ExecutionControl: Sendable {
     let executionID: UUID
     let workflowID: UUID

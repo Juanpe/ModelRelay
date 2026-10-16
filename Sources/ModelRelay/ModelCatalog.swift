@@ -20,11 +20,23 @@ public struct ModelCatalog: Sendable {
     private var decisionFactories: [ModelID: DecisionFactory] = [:]
 
     public init() {
-        if SystemLanguageModel.default.supportsImageInput { imageModels.insert(.appleOnDevice) }
-        if PrivateCloudComputeLanguageModel.default.supportsImageInput { imageModels.insert(.applePrivateCloud) }
+        if #available(macOS 27, iOS 27, visionOS 27, *) {
+            if SystemLanguageModel.default.supportsImageInput { imageModels.insert(.appleOnDevice) }
+            if PrivateCloudComputeLanguageModel.default.supportsImageInput { imageModels.insert(.applePrivateCloud) }
+        }
         factories = [
-            .appleOnDevice: { SystemLanguageModel.default },
-            .applePrivateCloud: { PrivateCloudComputeLanguageModel() },
+            .appleOnDevice: {
+                guard #available(macOS 26, iOS 26, visionOS 26, *) else {
+                    throw PlatformModelUnavailable(name: "Apple on-device", version: 26)
+                }
+                return SystemLanguageModel.default
+            },
+            .applePrivateCloud: {
+                guard #available(macOS 27, iOS 27, visionOS 27, *) else {
+                    throw PlatformModelUnavailable(name: "Apple Private Cloud Compute", version: 27)
+                }
+                return PrivateCloudComputeLanguageModel()
+            },
             .appleTextRecognition: { TextRecognitionModel() },
         ]
     }
@@ -79,6 +91,13 @@ public struct ModelCatalog: Sendable {
         guard let factory = factories[id] else { throw RelayError.unknownModel(id) }
         return try await factory()
     }
+}
+
+private struct PlatformModelUnavailable: LocalizedError, WorkflowFailureClassifiable {
+    let name: String
+    let version: Int
+    var errorDescription: String? { "\(name) requires iOS \(version), macOS \(version) or visionOS \(version)." }
+    var workflowFailureCategory: WorkflowFailureCategory { .modelUnavailable }
 }
 
 /// Apple's on-device text recognition (Vision) as a `LanguageModel`: it reads

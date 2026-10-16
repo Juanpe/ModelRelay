@@ -66,9 +66,9 @@ import Testing
         step.fallback = "unused"
         let records = Mutex<[StepRecord]>([])
         await #expect(throws: RelayError.self) {
-            try await WorkflowExecutor().run(Workflow("Fail") { step }, input: .text("data")) { record in
+            try await WorkflowExecutor().stream(Workflow("Fail") { step }, input: .text("data")).observing(onStep: { record in
                 records.withLock { $0.append(record) }
-            }
+            })
         }
         #expect(calls.withLock { $0 } == 1)
         #expect(records.withLock { $0.first?.failure != nil && $0.first?.input == "data" })

@@ -220,7 +220,7 @@ import Testing
     }
 }
 
-@Suite struct StepObserverTests {
+@Suite struct StepStreamTests {
     @Test func stepsAreReportedAsTheyFinishEvenWhenALaterOneFails() async throws {
         let seen = Mutex<[StepRecord]>([])
         let workflow = Workflow(name: "W", steps: [
@@ -229,7 +229,8 @@ import Testing
             Step.custom("broken") { _ in throw InvalidOutput(reason: "runtime failure") },
         ])
         await #expect(throws: expectedOperationFailure(step: "broken", reason: "runtime failure", category: .invalidOutput, uncertain: true)) {
-            try await WorkflowExecutor().run(workflow, input: .text("")) { record in seen.withLock { $0.append(record) } }
+            try await WorkflowExecutor().stream(workflow, input: .text(""))
+                .observing(onStep: { record in seen.withLock { $0.append(record) } })
         }
         // The steps that finished, then the one the run stopped at, with why.
         #expect(seen.withLock { Set($0.map(\.step)) } == ["first", "a", "b", "broken"])

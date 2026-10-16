@@ -52,6 +52,10 @@ Specialized `DecisionModel` implementations support handoff, not native
 conversations. Language-model decide/classify steps can share a conversation.
 Image steps can continue one; handoff is not an image attachment.
 
+Apple's on-device provider on OS 26 uses fixed tools per step and continues
+from the native transcript. Other providers keep dynamic tool bindings and
+reuse the native session. Neither path reloads the cached model between steps.
+
 <a name="resource-lifetime"></a>
 
 ## ♻️ Reuse resources, not accidental memory

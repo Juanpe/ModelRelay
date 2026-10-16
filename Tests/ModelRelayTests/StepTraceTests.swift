@@ -33,7 +33,7 @@ private final class Observed: Sendable {
         ])
         let observed = Observed()
         await #expect(throws: RelayError.self) {
-            try await executor.run(workflow, input: .text("Ana"), onStep: observed.add)
+            try await executor.stream(workflow, input: .text("Ana")).observing(onStep: observed.add)
         }
         let failed = try #require(observed.all.last)
         #expect(failed.step == "summary")
@@ -63,7 +63,7 @@ private final class Observed: Sendable {
         ])
         let observed = Observed()
         await #expect(throws: expectedOperationFailure(step: "call", reason: "The server answered HTTP 400: Bad Request: chat not found for •••", category: .requestRejected)) {
-            try await executor.run(workflow, input: .text(""), onStep: observed.add)
+            try await executor.stream(workflow, input: .text("")).observing(onStep: observed.add)
         }
         let failed = try #require(observed.all.last)
         #expect(failed.failure == "The server answered HTTP 400: Bad Request: chat not found for •••")

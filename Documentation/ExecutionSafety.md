@@ -3,7 +3,7 @@
 [← README](../README.md) · [Context and policies](ContextAndPolicies.md) · [Recovery](Recovery.md)
 
 Validate first, keep useful errors, observe progress and cap the work.
-The same controls apply to `run`, `start` and `resume`.
+The same controls apply to direct and streaming executions.
 
 [✅ Validation](#validation-before-execution) · [🩺 Errors](#structured-failures-and-retained-causes) · [📡 Events](#metadata-only-execution-events) · [⏱ Limits](#global-limits-and-usage)
 
@@ -70,9 +70,37 @@ fallback; a timeout or cancellation also does not prove a write never happened.
 
 <a name="metadata-only-execution-events"></a>
 
-## 📡 Observe without copying payloads
+## 📡 Stream progress
 
-Pass `onEvent:` for lifecycle metadata; use `onStep:` for full step records.
+```swift
+let execution = executor.stream(workflow, input: input)
+defer { execution.cancel() }
+
+for try await update in execution {
+    switch update {
+    case .event(let event): print(event.kind.rawValue, event.step ?? "")
+    case .step(let record): print("Finished", record.step)
+    }
+}
+
+let report = try await execution.result
+```
+
+`WorkflowExecutionStream` wraps an `AsyncThrowingStream`. Updates are
+`.event` metadata or `.step` records, which can contain user input/output.
+A failed step yields its record before iteration throws the original error;
+`result` throws the same error, retaining its typed cause.
+
+| Only need the result | Also need live updates |
+| --- | --- |
+| `run` | `stream` |
+| `start` | `startStream` |
+| `resume` | `resumeStream` |
+
+Streams start immediately and have one consumer, not broadcast subscribers.
+Awaiting `result` neither consumes updates nor executes work again.
+Updates buffer without dropping; a slow consumer can grow the backlog in
+memory. Use the direct API if you do not need progress.
 
 | Events contain | Events do not contain |
 | --- | --- |
@@ -83,13 +111,20 @@ Pass `onEvent:` for lifecycle metadata; use `onStep:` for full step records.
 Events cover execution, steps, models, tools, fallback, approval, successful
 checkpoint saves and exhausted limits. Host-defined names can still be sensitive.
 
-- Callbacks are synchronous, serialized, `@Sendable` and not main-actor isolated.
-  Keep them short; dispatch UI work yourself. Blocking observers delay cancellation.
-- References are released on completion, failure or pause.
+- Handle updates in your consuming task, including a UI-isolated task.
+- Metadata sequence numbers are ordered within an invocation. Parallel step
+  records arrive in completion order; the final report uses declaration order.
 - `executionID` survives resume; `invocationID` changes and `sequence` restarts.
-  Validation rejection happens before lifecycle events begin.
-- `onStep` fires before the post-step save. `checkpointSaved` fires after
-  successful store acknowledgement.
+  Validation errors reach iteration and `result` before lifecycle events begin.
+- Step records are enqueued before the post-step save; consumption may happen
+  later. `checkpointSaved` is emitted only after successful store acknowledgement.
+
+Cancellation while awaiting an update cancels execution. Call
+`execution.cancel()` to stop it explicitly, then await `result` for cooperative
+cleanup. Releasing the last stream/iterator also requests cancellation.
+Use `defer` so a `break` or an error in your loop body stops retained work.
+Cancelling a task awaiting `result` cancels execution too.
+Finishing updates does not discard the result.
 
 > 📣 Events are not token streaming or a durable journal. A process can die
 > after commit but before notification. If a save fails, reload the store:
@@ -106,8 +141,7 @@ let executor = WorkflowExecutor(limits: .init(
     maxToolCalls: 12,
     maxConcurrentSteps: 2
 ))
-let report = try await executor.run(workflow, input: input,
-    onEvent: { event in print(event.kind.rawValue, event.step ?? "") })
+let report = try await executor.run(workflow, input: input)
 print(report.usage.modelCalls, report.usage.toolCalls)
 ```
 
@@ -116,7 +150,7 @@ print(report.usage.modelCalls, report.usage.toolCalls)
 | `maxModelCalls` | Native session/decision attempts, fallback and factory preparation | Hidden provider HTTP/continuation rounds |
 | `maxToolCalls` | Admitted HTTP/MCP/direct-request attempts, including preparation or write-approval failures | Policy-denied calls, discovery, auth or listing |
 | `maxConcurrentSteps` | Leaf bodies across nested parallel blocks; blocks hold no slot | Parallel tool calls inside one native agent response |
-| `maxDuration` | Active invocation time, including preparation, requests, callbacks and store operations | Human review between invocations |
+| `maxDuration` | Active invocation time, including preparation, requests, write approvals and store operations | Human review between invocations |
 
 Defaults are unlimited. Counts/duration may be zero; concurrency must be
 positive. Invalid values throw `RelayError.invalidLimits` before work.

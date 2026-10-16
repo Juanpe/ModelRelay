@@ -25,9 +25,15 @@ let messages = [
 ]
 
 let modelID = ModelID(CommandLine.arguments.dropFirst().first ?? ModelID.appleOnDevice.rawValue)
-if modelID == .appleOnDevice, case .unavailable(let reason) = SystemLanguageModel.default.availability {
-    print("Apple on-device model unavailable: \(reason)")
-    exit(1)
+if modelID == .appleOnDevice {
+    guard #available(macOS 26, iOS 26, visionOS 26, *) else {
+        print("Apple on-device models require macOS 26 or later.")
+        exit(1)
+    }
+    if case .unavailable(let reason) = SystemLanguageModel.default.availability {
+        print("Apple on-device model unavailable: \(reason)")
+        exit(1)
+    }
 }
 var catalog = ModelCatalog()
 #if MLX
