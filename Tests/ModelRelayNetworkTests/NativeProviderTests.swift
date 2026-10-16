@@ -65,6 +65,15 @@ private struct Secrets: SecretProvider {
     func secret(named name: String) async throws -> String? { "host-secret-not-for-the-model" }
 }
 
+private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
+    private var saved: [UUID: Data] = [:]
+    func save(_ checkpoint: WorkflowExecutionCheckpoint, replacing generation: Int?) throws {
+        let current = try saved[checkpoint.executionID].map { try JSONDecoder().decode(WorkflowExecutionCheckpoint.self, from: $0) }
+        guard current?.generation == generation else { throw RecoveryError.checkpointConflict }
+        saved[checkpoint.executionID] = try JSONEncoder().encode(checkpoint)
+    }
+}
+
 @Suite(.serialized) struct NativeProviderTests {
     private func catalog() -> ModelCatalog {
         let model = OpenAILanguageModel(baseURL: URL(string: "https://provider.test/v1/")!, apiKey: "test-only",
@@ -98,7 +107,7 @@ private struct Secrets: SecretProvider {
             Step.prompt("summary", "Summarize this article.", model: "provider")
             Step.template("result", "Summary: {{summary}}")
         }
-        let report = try await WorkflowRunner(catalog: catalog()).run(workflow, input: .text("Article text"))
+        let report = try await WorkflowExecutor(catalog: catalog()).run(workflow, input: .text("Article text"))
         #expect(report.output == .text("Summary: A short summary."))
         #expect(report.records.first?.model == "provider")
         let sent = try #require(ProviderStub.sent.first)
@@ -120,7 +129,7 @@ private struct Secrets: SecretProvider {
                 Field("items", .list(.text))
             }
         }
-        let report = try await WorkflowRunner(catalog: catalog()).run(workflow, input: .text("Receipt"))
+        let report = try await WorkflowExecutor(catalog: catalog()).run(workflow, input: .text("Receipt"))
         #expect(report.output["total"] == .number(8.3))
         #expect(report.output["paid"] == .bool(true))
         #expect(report.output["items"] == .list([.text("latte")]))
@@ -137,7 +146,7 @@ private struct Secrets: SecretProvider {
                 Step.template("action", "Review {{input}}")
             }
         }
-        let report = try await WorkflowRunner(catalog: catalog()).run(workflow, input: .text("Server down"))
+        let report = try await WorkflowExecutor(catalog: catalog()).run(workflow, input: .text("Server down"))
         #expect(report.output == .text("Review Server down"))
     }
 
@@ -145,14 +154,14 @@ private struct Secrets: SecretProvider {
         ProviderStub.reset([toolReply, try reply("Created task-1.")])
         let server = ToolServer()
         let approvals = Mutex(0)
-        let runner = WorkflowRunner(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .ask { _ in
+        let executor = WorkflowExecutor(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .ask { _ in
             approvals.withLock { $0 += 1 }
             return true
         })
         let workflow = Workflow("Create") {
             Step.agent("answer", "Create a task.", tools: [createTask], model: "provider")
         }
-        let report = try await runner.run(workflow, input: .text("Read article"))
+        let report = try await executor.run(workflow, input: .text("Read article"))
         #expect(report.output == .text("Created task-1."))
         #expect(report.records.first?.toolCalls == ["create_task"])
         #expect(await server.requests.count == 1)
@@ -173,7 +182,7 @@ private struct Secrets: SecretProvider {
             Step.agent("answer", "Create a task.", tools: [createTask], model: "provider")
         }
         await #expect(throws: RelayError.self) {
-            try await WorkflowRunner(catalog: catalog(), requests: server, secrets: Secrets()).run(workflow, input: .text("x"))
+            try await WorkflowExecutor(catalog: catalog(), requests: server, secrets: Secrets()).run(workflow, input: .text("x"))
         }
         #expect(await server.requests.isEmpty)
         #expect(ProviderStub.sent.count == 1)
@@ -186,7 +195,7 @@ private struct Secrets: SecretProvider {
             Step.agent("answer", "Create a task.", tools: [createTask], model: "provider", fallback: "provider")
         }
         await #expect(throws: RelayError.self) {
-            try await WorkflowRunner(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+            try await WorkflowExecutor(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
                 .run(workflow, input: .text("x"))
         }
         #expect(await server.requests.count == 1)
@@ -198,7 +207,7 @@ private struct Secrets: SecretProvider {
         let workflow = Workflow("Fallback") {
             Step.prompt("answer", "Answer.", model: "provider", fallback: "provider")
         }
-        let report = try await WorkflowRunner(catalog: catalog()).run(workflow, input: .text("x"))
+        let report = try await WorkflowExecutor(catalog: catalog()).run(workflow, input: .text("x"))
         #expect(report.output == .text("Fallback answer"))
         #expect(report.records.first?.usedFallback == true)
         #expect(ProviderStub.sent.count == 2)
@@ -213,7 +222,7 @@ private struct Secrets: SecretProvider {
             Step.prompt("summary", "Summarize.", model: "provider")
             Step.extract("expense", instruction: "Extract.", model: "provider") { Field("total", .number) }
         }
-        let report = try await WorkflowRunner(catalog: anthropicCatalog()).run(workflow, input: .text("Receipt"))
+        let report = try await WorkflowExecutor(catalog: anthropicCatalog()).run(workflow, input: .text("Receipt"))
         #expect(report.records.first?.value == .text("A summary"))
         #expect(report.output["total"] == .number(8.3))
         #expect(ProviderStub.sent.count == 2)
@@ -229,7 +238,7 @@ private struct Secrets: SecretProvider {
         let workflow = Workflow("Anthropic tool") {
             Step.agent("answer", "Create a task.", tools: [createTask], model: "provider")
         }
-        let report = try await WorkflowRunner(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+        let report = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
             .run(workflow, input: .text("x"))
         #expect(report.output == .text("Created"))
         #expect(await server.requests.count == 1)
@@ -247,7 +256,7 @@ private struct Secrets: SecretProvider {
         ])
         let server = ToolServer()
         let workflow = Workflow("Native reasoning") { Step.agent("answer", "Create.", tools: [createTask], model: "provider") }
-        let report = try await WorkflowRunner(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+        let report = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
             .run(workflow, input: .text("x"))
         #expect(report.output == .text("Created"))
         #expect(await server.requests.count == 1)
@@ -255,6 +264,60 @@ private struct Secrets: SecretProvider {
         let blocks = try #require(messages.first(where: { $0["role"] as? String == "assistant" })?["content"] as? [[String: Any]])
         #expect(blocks.first?["type"] as? String == "thinking")
         #expect(blocks.first?["signature"] as? String == "opaque")
+    }
+
+    @Test func nativeConversationKeepsToolHistoryButReplacesCurrentTools() async throws {
+        ProviderStub.reset([toolReply, try reply("Created task-1."), try reply("Reviewed task-1.")])
+        let server = ToolServer()
+        let workflow = Workflow("Two native turns") {
+            Step.agent("create", "Create.", tools: [createTask], model: "provider").withContext(.conversation("assistant"))
+            Step.agent("review", "Review only.", input: "input", model: "provider")
+                .withContext(.conversation("assistant")).withPolicy(.readOnly)
+        }
+        let report = try await WorkflowExecutor(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+            .run(workflow, input: .text("Read article"))
+        #expect(report.output == .text("Reviewed task-1."))
+        #expect(await server.requests.count == 1)
+        #expect(ProviderStub.sent.count == 3)
+        let last = try #require(ProviderStub.sent.last)
+        let messages = try #require(last.json["messages"] as? [[String: Any]])
+        #expect(messages.contains { $0["role"] as? String == "tool" && $0["tool_call_id"] as? String == "call-1" })
+        #expect(last.json["tools"] == nil)
+    }
+
+    @Test func anthropicReasoningAndToolHistorySurviveDurablePauseWithoutReplayingWrites() async throws {
+        ProviderStub.reset([
+            (200, #"{"id":"m1","type":"message","role":"assistant","model":"scripted","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Plan","signature":"opaque"},{"type":"tool_use","id":"call-1","name":"create_task","input":{"title":"Read article"}}]}"#),
+            (200, #"{"id":"m2","type":"message","role":"assistant","model":"scripted","stop_reason":"end_turn","content":[{"type":"text","text":"Created"}]}"#),
+            (200, #"{"id":"m3","type":"message","role":"assistant","model":"scripted","stop_reason":"end_turn","content":[{"type":"text","text":"Reviewed"}]}"#),
+        ])
+        let workflow = Workflow("Recover native reasoning") {
+            Step.agent("create", "Create.", tools: [createTask], model: "provider").withContext(.conversation("assistant"))
+            Step.agent("review", "Review only.", input: "input", model: "provider")
+                .withContext(.conversation("assistant")).requiringApproval("Review")
+        }
+        let server = ToolServer()
+        let store = ProviderCheckpoints()
+        let outcome = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+            .start(workflow, input: .text("Read article"), revision: "1", store: store)
+        guard case .awaitingApproval(let gate) = outcome else { Issue.record("expected pause"); return }
+        let data = try JSONEncoder().encode(gate)
+        #expect(!String(decoding: data, as: UTF8.self).contains("host-secret-not-for-the-model"))
+        let restored = try JSONDecoder().decode(WorkflowExecutionCheckpoint.self, from: data)
+        let resumed = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server)
+            .resume(workflow, from: restored, revision: "1", approval: .approve, store: store)
+        guard case .completed(let report) = resumed else { Issue.record("expected completion"); return }
+        #expect(report.output == .text("Reviewed"))
+        #expect(await server.requests.count == 1)
+        #expect(ProviderStub.sent.count == 3)
+        let last = try #require(ProviderStub.sent.last)
+        let messages = try #require(last.json["messages"] as? [[String: Any]])
+        let blocks = try #require(messages.first(where: { $0["role"] as? String == "assistant" })?["content"] as? [[String: Any]])
+        #expect(blocks.first?["signature"] as? String == "opaque")
+        #expect(messages.contains { message in
+            (message["content"] as? [[String: Any]])?.contains { $0["tool_use_id"] as? String == "call-1" } == true
+        })
+        #expect(last.json["tools"] == nil)
     }
 
     @Test func theHostToolBudgetStillAppliesAcrossProviderRounds() async throws {
@@ -266,7 +329,7 @@ private struct Secrets: SecretProvider {
             Step.agent("answer", "Create tasks.", tools: [createTask], model: "provider")
         }
         await #expect(throws: RelayError.self) {
-            try await WorkflowRunner(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
+            try await WorkflowExecutor(catalog: catalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
                 .run(workflow, input: .text("x"))
         }
         #expect(await server.requests.count == AgentTool.maxCallsPerStep)

@@ -14,7 +14,7 @@ import Testing
             }
             Step.template("result", "{{prefix}}, {{normalized.name}}!")
         }
-        let report = try await WorkflowRunner().run(workflow, input: .text("  Ada  "))
+        let report = try await WorkflowExecutor().run(workflow, input: .text("  Ada  "))
         #expect(report.output == .text("Hello, Ada!"))
         #expect(report.records.map(\.step) == ["prefix", "normalized", "result"])
         #expect(report.records[1].input == "  Ada  ")
@@ -26,7 +26,7 @@ import Testing
             Step.template("text", "four")
             Step.custom("count") { .number(Double($0.input.textValue.count)) }
         }
-        #expect(try await WorkflowRunner().run(workflow, input: .null).output == .number(4))
+        #expect(try await WorkflowExecutor().run(workflow, input: .null).output == .number(4))
     }
 
     @Test func bodiesRunOnlyAtExecutionTimeAndCopiesKeepIdentity() async throws {
@@ -37,7 +37,7 @@ import Testing
         #expect(Set([step, copy]).count == 1)
         #expect(step != Step.custom("count") { _ in .null })
         #expect(calls.withLock { $0 } == 0)
-        _ = try await WorkflowRunner().run(Workflow("Run") { step }, input: .null)
+        _ = try await WorkflowExecutor().run(Workflow("Run") { step }, input: .null)
         #expect(calls.withLock { $0 } == 1)
     }
 
@@ -66,7 +66,7 @@ import Testing
         step.fallback = "unused"
         let records = Mutex<[StepRecord]>([])
         await #expect(throws: RelayError.self) {
-            try await WorkflowRunner().run(Workflow("Fail") { step }, input: .text("data")) { record in
+            try await WorkflowExecutor().run(Workflow("Fail") { step }, input: .text("data")) { record in
                 records.withLock { $0.append(record) }
             }
         }
@@ -78,8 +78,8 @@ import Testing
         let workflow = Workflow("Timeout") {
             Step.custom("slow") { _ in try await Task.sleep(for: .seconds(60)); return .null }
         }
-        await #expect(throws: RelayError.stepFailed(step: "slow", reason: "it ran longer than \(Duration.milliseconds(20))")) {
-            try await WorkflowRunner(stepTimeout: .milliseconds(20)).run(workflow, input: .null)
+        await #expect(throws: expectedOperationFailure(step: "slow", reason: "it ran longer than \(Duration.milliseconds(20))", category: .timeout, uncertain: true)) {
+            try await WorkflowExecutor(stepTimeout: .milliseconds(20)).run(workflow, input: .null)
         }
     }
 
@@ -88,7 +88,7 @@ import Testing
         let workflow = Workflow("Cancel") {
             Step.custom("slow") { _ in started.withLock { $0 = true }; try await Task.sleep(for: .seconds(60)); return .null }
         }
-        let task = Task { try await WorkflowRunner().run(workflow, input: .null) }
+        let task = Task { try await WorkflowExecutor().run(workflow, input: .null) }
         while !started.withLock({ $0 }) { await Task.yield() }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
@@ -110,7 +110,7 @@ import Testing
                 }
             }
         }
-        #expect(try await WorkflowRunner().run(workflow, input: .null).output == .dictionary(["left": .number(1), "right": .number(2)]))
+        #expect(try await WorkflowExecutor().run(workflow, input: .null).output == .dictionary(["left": .number(1), "right": .number(2)]))
     }
 
     @Test func unselectedBranchDoesNotExecuteItsBody() async throws {
@@ -121,7 +121,7 @@ import Testing
                 Step.custom("notSelected") { _ in Issue.record("Must not execute"); return .null }
             }
         }
-        let report = try await WorkflowRunner().run(workflow, input: .text("yes"))
+        let report = try await WorkflowExecutor().run(workflow, input: .text("yes"))
         #expect(report.output == .text("done"))
         #expect(report.records.first(where: { $0.step == "notSelected" })?.skipped == true)
     }

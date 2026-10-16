@@ -17,7 +17,7 @@ import Testing
         let workflow = Workflow(name: "Read", steps: [
             Step("page", .request(HTTPRequest(url: "{{input}}", reading: .page))),
         ])
-        let report = try await WorkflowRunner(requests: server).run(workflow, input: .text(" https://example.com/news?id=1 "))
+        let report = try await WorkflowExecutor(requests: server).run(workflow, input: .text(" https://example.com/news?id=1 "))
         #expect(server.requests.first?.url.absoluteString == "https://example.com/news?id=1")
         let text = report.output.textValue
         #expect(text.hasPrefix("Apple ships a new model"))
@@ -33,7 +33,7 @@ import Testing
         ])
         for bad in ["file:///etc/passwd", "not a link", ""] {
             await #expect(throws: RelayError.self) {
-                try await WorkflowRunner(requests: FakeServer(json: "{}")).run(workflow, input: .text(bad))
+                try await WorkflowExecutor(requests: FakeServer(json: "{}")).run(workflow, input: .text(bad))
             }
         }
     }
@@ -43,7 +43,7 @@ import Testing
         let workflow = Workflow(name: "Search", steps: [
             Step("s", .request(HTTPRequest(url: "https://example.com/search?q={{input}}"))),
         ])
-        _ = try await WorkflowRunner(requests: server).run(workflow, input: .text("https://evil.example/&x=1"))
+        _ = try await WorkflowExecutor(requests: server).run(workflow, input: .text("https://evil.example/&x=1"))
         #expect(server.requests.first?.url.host() == "example.com")
         #expect(server.requests.first?.url.query()?.contains("&x=1") == false)
     }
@@ -52,8 +52,8 @@ import Testing
         let workflow = Workflow(name: "Read", steps: [
             Step("page", .request(HTTPRequest(url: "https://example.com", reading: .page))),
         ])
-        await #expect(throws: RelayError.stepFailed(step: "page", reason: "The page has no readable text")) {
-            try await WorkflowRunner(requests: FakeServer(json: "<html><body><script>x</script></body></html>"))
+        await #expect(throws: expectedOperationFailure(step: "page", reason: "The page has no readable text", category: .invalidOutput)) {
+            try await WorkflowExecutor(requests: FakeServer(json: "<html><body><script>x</script></body></html>"))
                 .run(workflow, input: .text(""))
         }
     }

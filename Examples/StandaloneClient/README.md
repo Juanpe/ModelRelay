@@ -12,7 +12,12 @@ swift run --package-path Examples/StandaloneClient StandaloneClient
 
 The default workflow is deterministic and makes no model or network calls.
 It demonstrates construction-time conditions, parallel steps, explicit
-result references, progress callbacks and a Codable round-trip.
+result references, progress callbacks and a Codable round-trip. It also exercises
+custom bodies, privacy labels and approval/checkpoint restoration with a new
+executor. Its JSON-round-tripping CAS store is **in-memory demo code**, not durable
+production storage. No executable body is serialized or replayed on resume.
+The consumer also checks automatic/preflight validation, metadata events,
+attempt/concurrency limits, report usage and retained typed custom failures.
 
 To opt into a real on-device model call:
 

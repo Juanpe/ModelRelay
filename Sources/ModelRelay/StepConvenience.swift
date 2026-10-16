@@ -1,5 +1,28 @@
 extension Step {
-    /// A free-text model step. The model must be registered in the runner's catalog.
+    /// Adds a durable approval boundary. Use WorkflowExecutor.start/resume;
+    /// ordinary run rejects approval gates rather than silently ignoring them.
+    /// Gates inside blocks are not supported; gate the containing block.
+    public func requiringApproval(_ reason: String) -> Step {
+        var copy = self
+        copy.approval = reason
+        return copy
+    }
+
+    /// Opts into a native conversation or a selected-value handoff.
+    public func withContext(_ context: StepContext) -> Step {
+        var copy = self
+        copy.context = context
+        return copy
+    }
+
+    /// Narrows execution for this step/block and propagates local-only data.
+    public func withPolicy(_ policy: WorkflowExecutionPolicy) -> Step {
+        var copy = self
+        copy.policy = (copy.policy ?? .unrestricted).combined(with: policy)
+        return copy
+    }
+
+    /// A free-text model step. The model must be registered in the executor's catalog.
     public static func prompt(_ name: String, _ instruction: String, input: String? = nil,
                               model: ModelID, fallback: ModelID? = nil) -> Step {
         Step(name, .prompt(instruction: instruction), input: input, model: model, fallback: fallback)
@@ -23,8 +46,7 @@ extension Step {
         Step(name, .template(text), input: input)
     }
 
-    /// An independent agent step. Reusing instructions, tools or a model does
-    /// not share a conversation: each step starts a fresh model session.
+    /// An agent step, isolated by default. Use withContext to opt into history.
     public static func agent(_ name: String, _ instruction: String, tools: [AgentTool] = [], kits: [String]? = nil,
                              input: String? = nil, model: ModelID, fallback: ModelID? = nil) -> Step {
         Step(name, .agent(instruction: instruction, tools: tools, kits: kits), input: input, model: model, fallback: fallback)
@@ -36,12 +58,12 @@ extension Step {
         Step(name, .decide(questions: questions), input: input, model: model, fallback: fallback)
     }
 
-    /// An HTTP request; the runner supplies transport, secrets and write policy.
+    /// An HTTP request; the executor supplies transport, secrets and write policy.
     public static func request(_ name: String, _ request: HTTPRequest, input: String? = nil) -> Step {
         Step(name, .request(request), input: input)
     }
 
-    /// Builds both branches as data; the runner chooses a branch at execution time.
+    /// Builds both branches as data; the executor chooses a branch at execution time.
     public static func ifEquals(_ name: String, reference: String, value: String, input: String? = nil,
                                 @WorkflowBuilder then: () -> [Step],
                                 @WorkflowBuilder otherwise: () -> [Step] = { [] }) -> Step {
@@ -66,7 +88,7 @@ extension Step {
     }
 
     /// Runs trusted developer code once. The body is not serializable and
-    /// receives values only, never the runner's secrets or transports.
+    /// receives values only, never the executor's secrets or transports.
     public static func custom(_ name: String, input: String? = nil,
                               body: @escaping @Sendable (CustomStepContext) async throws -> Value) -> Step {
         Step(name, .custom(CustomStepBody(body)), input: input)

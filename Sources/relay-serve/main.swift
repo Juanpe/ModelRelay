@@ -129,7 +129,7 @@ var catalog = ModelCatalog()
 #if MLX
 catalog.registerMLXModels()
 #endif
-let runner = WorkflowRunner(catalog: catalog)
+let executor = WorkflowExecutor(catalog: catalog)
 
 // MARK: - HTTP
 
@@ -143,7 +143,7 @@ let runner = WorkflowRunner(catalog: catalog)
 
 struct ErrorBody: Encodable { let error: String }
 struct StepOut: Encodable { let step: String; let model: String?; let fallback: Bool; let skipped: Bool; let ms: Int }
-struct RunOut: Encodable { let output: JSONValue; let steps: [StepOut]; let ms: Int }
+struct ExecutionResponse: Encodable { let output: JSONValue; let steps: [StepOut]; let ms: Int }
 
 @Sendable func milliseconds(_ d: Duration) -> Int { Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000) }
 
@@ -173,12 +173,12 @@ struct RunOut: Encodable { let output: JSONValue; let steps: [StepOut]; let ms: 
         if let model = request.model { workflow.steps = overriding(workflow.steps, model: ModelID(model)) }
         Task {
             do {
-                let report = try await runner.run(workflow, input: request.input.asInput)
+                let report = try await executor.run(workflow, input: request.input.asInput)
                 let steps = report.records.map {
                     StepOut(step: $0.step, model: $0.model?.rawValue, fallback: $0.usedFallback, skipped: $0.skipped,
                             ms: milliseconds($0.duration))
                 }
-                respond(connection, status: 200, json: RunOut(output: JSONValue(report.output), steps: steps,
+                respond(connection, status: 200, json: ExecutionResponse(output: JSONValue(report.output), steps: steps,
                                                               ms: milliseconds(report.duration)))
             } catch {
                 respond(connection, status: 500, json: ErrorBody(error: String(describing: error)))

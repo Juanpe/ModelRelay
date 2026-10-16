@@ -3,10 +3,19 @@ import ModelRelay
 import Synchronization
 
 /// What a cloud model call failed with. Never contains the API key.
-public struct CloudModelError: Error, CustomStringConvertible, Sendable {
+public struct CloudModelError: Error, CustomStringConvertible, Sendable, WorkflowFailureClassifiable {
     public var status: Int
     public var message: String
     public var description: String { status == 0 ? message : "HTTP \(status): \(message)" }
+    public var workflowFailureCategory: WorkflowFailureCategory {
+        switch status {
+        case 0: .transport
+        case 401: .authenticationRequired
+        case 403: .permissionDenied
+        case 429: .modelUnavailable
+        default: .requestRejected
+        }
+    }
 }
 
 enum CloudHTTP {

@@ -33,7 +33,7 @@ var catalog = ModelCatalog()
 #if MLX
 catalog.registerMLXModels()
 #endif
-let runner = WorkflowRunner(catalog: catalog)
+let executor = WorkflowExecutor(catalog: catalog)
 
 let extract = Workflow(name: "Receipt to expense", steps: [
     Step("expense", .extract(instruction: "Extract the expense from this receipt. total is the final amount paid.", fields: [
@@ -47,7 +47,7 @@ let triage = Workflow(name: "Triage", steps: [
 // Warm up: the first call loads the model (and may download MLX weights);
 // that time isn't answer latency, so it's excluded from the results.
 print("Loading \(modelID)…")
-_ = try? await WorkflowRunner(catalog: catalog, stepTimeout: .seconds(600))
+_ = try? await WorkflowExecutor(catalog: catalog, stepTimeout: .seconds(600))
     .run(triage, input: .text("Warm-up"))
 
 func ms(_ d: Duration) -> Int { Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000) }
@@ -57,7 +57,7 @@ print("Extract (merchant · total · currency)")
 var extractScore = 0, extractTime: [Int] = []
 for r in receipts {
     do {
-        let report = try await runner.run(extract, input: .text(r.text))
+        let report = try await executor.run(extract, input: .text(r.text))
         let o = report.output
         let merchant = o["merchant"]?.textValue.lowercased().contains(r.merchant.lowercased().prefix(6)) == true
         var total = false
@@ -73,7 +73,7 @@ print("\nClassify (urgent · later)")
 var classifyScore = 0, classifyTime: [Int] = []
 for m in messages {
     do {
-        let report = try await runner.run(triage, input: .text(m.text))
+        let report = try await executor.run(triage, input: .text(m.text))
         let ok = report.output.textValue == m.label
         classifyScore += ok ? 1 : 0; classifyTime.append(ms(report.duration))
         print(String(format: "  %@  %5d ms  %@ → %@", ok ? "✓" : "✗", ms(report.duration), String(m.text.prefix(48)), report.output.textValue))

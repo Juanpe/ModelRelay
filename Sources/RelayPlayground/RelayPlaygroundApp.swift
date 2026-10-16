@@ -68,7 +68,7 @@ struct Sample: Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 final class PlaygroundModel {
-    enum Phase { case idle, running, done(RunReport), failed(String) }
+    enum Phase { case idle, running, done(WorkflowExecutionReport), failed(String) }
 
     var sample = Sample.all[0] { didSet { input = sample.input } }
     var input = Sample.all[0].input
@@ -84,13 +84,13 @@ final class PlaygroundModel {
         #endif
         return ids
     }()
-    private let runner: WorkflowRunner = {
+    private let executor: WorkflowExecutor = {
         var catalog = ModelCatalog()
         #if MLX
         // MLX weights download from Hugging Face the first time a model runs.
         catalog.registerMLXModels()
         #endif
-        return WorkflowRunner(catalog: catalog)
+        return WorkflowExecutor(catalog: catalog)
     }()
 
     func run() {
@@ -100,7 +100,7 @@ final class PlaygroundModel {
         let input = Value.text(input)
         task = Task {
             do {
-                let report = try await runner.run(workflow, input: input)
+                let report = try await executor.run(workflow, input: input)
                 guard !Task.isCancelled else { return }
                 phase = .done(report)
             } catch {

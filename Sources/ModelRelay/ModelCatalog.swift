@@ -7,15 +7,15 @@ import Vision
 /// catalogs: Apple's models are built in; MLX or cloud models are added by
 /// registering a factory. ModelRelay itself never downloads or stores keys.
 public struct ModelCatalog: Sendable {
-    /// Called for each model attempt, potentially concurrently. The catalog
-    /// does not cache the result; return a shared backend when appropriate.
-    /// Sharing a model does not share a step's `LanguageModelSession`.
+    /// Resolved once per model ID and run, with concurrent loads coalesced.
+    /// Return a shared backend for reuse across runs; session history stays run-local.
     public typealias Factory = @Sendable () async throws -> any LanguageModel
 
-    /// Like `Factory`, this is resolved per attempt and is not memoized.
+    /// Like Factory, resolved once per ID and run.
     public typealias DecisionFactory = @Sendable () async throws -> any DecisionModel
 
     private var imageModels: Set<ModelID> = [.appleTextRecognition]
+    private var locations: [ModelID: ModelLocation] = [.appleOnDevice: .local, .appleTextRecognition: .local, .applePrivateCloud: .remote]
     private var factories: [ModelID: Factory]
     private var decisionFactories: [ModelID: DecisionFactory] = [:]
 
@@ -31,25 +31,30 @@ public struct ModelCatalog: Sendable {
 
     /// Registers a native provider. Enable `supportsImages` only for a model
     /// that accepts images; AnyLanguageModel has no universal vision capability.
-    public mutating func register(_ id: ModelID, supportsImages: Bool = false, factory: @escaping Factory) {
+    public mutating func register(_ id: ModelID, supportsImages: Bool = false, location: ModelLocation = .unspecified, factory: @escaping Factory) {
         factories[id] = factory
+        decisionFactories[id] = nil
+        locations[id] = location
         if supportsImages { imageModels.insert(id) } else { imageModels.remove(id) }
     }
 
-    public func registering(_ id: ModelID, supportsImages: Bool = false, factory: @escaping Factory) -> ModelCatalog {
+    public func registering(_ id: ModelID, supportsImages: Bool = false, location: ModelLocation = .unspecified, factory: @escaping Factory) -> ModelCatalog {
         var copy = self
-        copy.register(id, supportsImages: supportsImages, factory: factory)
+        copy.register(id, supportsImages: supportsImages, location: location, factory: factory)
         return copy
     }
 
     /// Adds a model for decide steps (it answers questions; it doesn't write text).
-    public mutating func register(decisions id: ModelID, factory: @escaping DecisionFactory) {
+    public mutating func register(decisions id: ModelID, location: ModelLocation = .unspecified, factory: @escaping DecisionFactory) {
         decisionFactories[id] = factory
+        factories[id] = nil
+        imageModels.remove(id)
+        locations[id] = location
     }
 
-    public func registering(decisions id: ModelID, factory: @escaping DecisionFactory) -> ModelCatalog {
+    public func registering(decisions id: ModelID, location: ModelLocation = .unspecified, factory: @escaping DecisionFactory) -> ModelCatalog {
         var copy = self
-        copy.register(decisions: id, factory: factory)
+        copy.register(decisions: id, location: location, factory: factory)
         return copy
     }
 
@@ -58,6 +63,15 @@ public struct ModelCatalog: Sendable {
     func decisionModel(_ id: ModelID) async throws -> (any DecisionModel)? {
         try await decisionFactories[id]?()
     }
+
+    func check(_ id: ModelID, policy: WorkflowExecutionPolicy, step: String) throws {
+        guard factories[id] != nil || decisionFactories[id] != nil else { throw RelayError.unknownModel(id) }
+        if policy.data == .localOnly, locations[id] != .local {
+            throw RelayError.policyViolation(step: step, reason: "local-only data requires an explicitly local model")
+        }
+    }
+
+    func isDecision(_ id: ModelID) -> Bool { decisionFactories[id] != nil }
 
     func supportsImages(_ id: ModelID) -> Bool { imageModels.contains(id) }
 

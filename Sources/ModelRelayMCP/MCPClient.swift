@@ -58,7 +58,7 @@ public struct MCPConnector: ToolServerConnector {
 }
 
 /// Why talking to an MCP server failed. Never contains a token.
-public enum MCPError: Error, LocalizedError, Equatable, Sendable {
+public enum MCPError: Error, LocalizedError, Equatable, Sendable, WorkflowFailureClassifiable {
     case invalidAddress
     /// The server wants the person to sign in. `challenge` is its
     /// `WWW-Authenticate` header, which says where to start.
@@ -67,6 +67,16 @@ public enum MCPError: Error, LocalizedError, Equatable, Sendable {
     case server(String)
     case toolFailed(String)
     case invalidResponse(String)
+
+    public var workflowFailureCategory: WorkflowFailureCategory {
+        switch self {
+        case .needsSignIn: .authenticationRequired
+        case .http(let status, _): status == 401 ? .authenticationRequired : status == 403 ? .permissionDenied : .requestRejected
+        case .invalidAddress: .validation
+        case .invalidResponse: .invalidOutput
+        default: .unknown
+        }
+    }
 
     public var errorDescription: String? {
         switch self {

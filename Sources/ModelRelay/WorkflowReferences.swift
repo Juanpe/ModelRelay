@@ -34,6 +34,7 @@ extension Workflow {
         for step in Self.flatten(steps) {
             let available = Set(availableSteps(before: step.name).map(\.name) + ["input"])
             var refs = step.input.map { [$0] } ?? []
+            if case .handoff(let values) = step.context { refs += values }
             switch step.kind {
             case .ifEquals(let reference, _, _, _), .switchOn(let reference, _, _): refs.append(reference)
             default: break
@@ -100,16 +101,9 @@ extension Workflow {
         }
     }
 
-    private static func tokens(in text: String) -> [String] {
-        var rest = Substring(text), result: [String] = []
-        while let open = rest.range(of: "{{"), let close = rest[open.upperBound...].range(of: "}}") {
-            result.append(rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces))
-            rest = rest[close.upperBound...]
-        }
-        return result
-    }
+    private static func tokens(in text: String) -> [String] { Template.references(in: text) }
 
-    private static func templates(in step: Step) -> [(String, Bool, Bool)] {
+    static func templates(in step: Step) -> [(String, Bool, Bool)] {
         func request(_ request: HTTPRequest, arguments: Bool) -> [(String, Bool, Bool)] {
             ([request.url, request.body ?? ""] + request.headers.map(\.value)).map { ($0, true, arguments) }
         }
@@ -155,6 +149,7 @@ extension Workflow {
         var copy = step
         if copy.name == old { copy.name = new }
         copy.input = copy.input.map(reference)
+        if case .handoff(let values) = copy.context { copy.context = .handoff(values.map(reference)) }
         switch copy.kind {
         case .prompt(let text): copy.kind = .prompt(instruction: template(text))
         case .extract(let text, let fields): copy.kind = .extract(instruction: template(text), fields: fields)

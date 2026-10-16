@@ -9,7 +9,7 @@ public struct HTTPRequest: Codable, Sendable, Hashable {
         case get = "GET", post = "POST", put = "PUT", patch = "PATCH", delete = "DELETE"
 
         /// Calls that change something on the other side. They never run
-        /// unless the runner's `WritePolicy` allows them, and are never retried.
+        /// unless the executor's `WritePolicy` allows them, and are never retried.
         public var isWrite: Bool { self != .get }
     }
 
@@ -59,10 +59,7 @@ public struct PreparedRequest: Sendable, CustomStringConvertible {
         var text = "\(method.rawValue) \(url.absoluteString)"
         for header in headers { text += "\n\(header.name): \(header.value)" }
         if let body, let string = String(data: body, encoding: .utf8) { text += "\n\n\(string)" }
-        for secret in secrets where !secret.isEmpty {
-            text = text.replacingOccurrences(of: secret, with: "•••")
-        }
-        return text
+        return RequestBuilder.redact(text, secrets: secrets)
     }
 }
 
@@ -141,6 +138,14 @@ extension Value {
 enum RequestBuilder {
     static let maxResponseBytes = 2_000_000
 
+    /// A server/error can echo a URL-encoded or JSON-escaped credential too.
+    static func redact(_ text: String, secrets: [String]) -> String {
+        let variants = Set(secrets.filter { !$0.isEmpty }.flatMap { [$0, percentEncode($0), secretEncode($0), jsonEscape($0)] })
+        return variants.filter { !$0.isEmpty }.sorted { $0.count > $1.count }.reduce(text) {
+            $0.replacingOccurrences(of: $1, with: "•••")
+        }
+    }
+
     /// Names used as `{{secret.NAME}}` anywhere in the request.
     static func secretNames(in request: HTTPRequest) -> Set<String> {
         let parts = [request.url, request.body ?? ""] + request.headers.map(\.value)
@@ -214,7 +219,7 @@ enum RequestBuilder {
         guard (200..<300).contains(response.status) else {
             // The server's own explanation, when it gives one, says why.
             let detail = errorDetail(response.body).map { ": \($0)" } ?? ""
-            throw InvalidOutput(reason: "The server answered HTTP \(response.status)\(detail)")
+            throw HTTPResponseFailure(status: response.status, description: "The server answered HTTP \(response.status)\(detail)")
         }
         guard response.body.count <= maxResponseBytes else {
             throw InvalidOutput(reason: "The response is larger than \(maxResponseBytes / 1_000_000) MB")

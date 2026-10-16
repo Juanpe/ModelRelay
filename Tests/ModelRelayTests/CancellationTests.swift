@@ -20,11 +20,11 @@ import Testing
         let workflow = Workflow("Cancel") {
             Step("answer", kind, model: "primary", fallback: "fallback")
         }
-        let runner = WorkflowRunner(catalog: .scripted(["primary": primary, "fallback": fallback]))
+        let executor = WorkflowExecutor(catalog: .scripted(["primary": primary, "fallback": fallback]))
         let input: Value = if case .readImage = kind {
             .image(ImageValue(data: picture(), contentType: "image/png"))
         } else { .text("Original") }
-        let task = Task { try await runner.run(workflow, input: input) }
+        let task = Task { try await executor.run(workflow, input: input) }
         defer { task.cancel() }
         for _ in 0..<200 {
             if slow.callCount > 0 { break }

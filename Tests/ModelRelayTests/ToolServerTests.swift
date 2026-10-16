@@ -47,12 +47,12 @@ private final class Asked: Sendable {
         let server = FakeToolServer([createIssue, search])
         let model = ScriptedModel("small", replies: [#"<tool:create_issue>{"title": "Fix login"}"#, "Created ISS-1."])
         let asked = Asked()
-        let runner = WorkflowRunner(catalog: .scripted(["small": model]), writePolicy: asked.policy(true),
+        let executor = WorkflowExecutor(catalog: .scripted(["small": model]), writePolicy: asked.policy(true),
                                     toolKits: [kit], toolServers: server)
         let workflow = Workflow(name: "File", steps: [
             Step("answer", .agent(instruction: "File it.", tools: [], kits: ["linear"]), model: "small"),
         ])
-        let report = try await runner.run(workflow, input: .text("Login is broken"))
+        let report = try await executor.run(workflow, input: .text("Login is broken"))
         #expect(report.output == .text("Created ISS-1."))
         #expect(report.records.first?.toolCalls == ["create_issue"])
         #expect(server.made.first?.arguments["title"] == .text("Fix login"))
@@ -62,11 +62,11 @@ private final class Asked: Sendable {
     @Test func readOnlyToolsDontAskAndNamesAreMadeSafe() async throws {
         let server = FakeToolServer([search], reply: .list([.text("ISS-1")]))
         let model = ScriptedModel("small", replies: [#"<tool:search_issues>{"query": "login"}"#, "Found one."])
-        let runner = WorkflowRunner(catalog: .scripted(["small": model]), writePolicy: .deny, toolKits: [kit], toolServers: server)
+        let executor = WorkflowExecutor(catalog: .scripted(["small": model]), writePolicy: .deny, toolKits: [kit], toolServers: server)
         let workflow = Workflow(name: "Find", steps: [
             Step("answer", .agent(instruction: "Find it.", tools: [], kits: ["linear"]), model: "small"),
         ])
-        let report = try await runner.run(workflow, input: .text("login"))
+        let report = try await executor.run(workflow, input: .text("login"))
         #expect(report.output == .text("Found one."))
         #expect(server.made.first?.tool == "search.issues")
     }
@@ -79,8 +79,8 @@ private final class Asked: Sendable {
             ])),
             Step("say", .template("Filed {{file.id}}")),
         ])
-        let runner = WorkflowRunner(writePolicy: .allow, toolKits: [kit], toolServers: server)
-        let report = try await runner.run(workflow, input: .text("login"))
+        let executor = WorkflowExecutor(writePolicy: .allow, toolKits: [kit], toolServers: server)
+        let report = try await executor.run(workflow, input: .text("login"))
         #expect(report.output == .text("Filed ISS-1"))
         let call = try #require(server.made.first)
         #expect(call.arguments == ["title": .text("Bug: login"), "priority": .number(2), "urgent": .bool(true),
@@ -94,9 +94,35 @@ private final class Asked: Sendable {
             Step("file", .useTool(kit: "linear", tool: "create_issue", arguments: ["title": "x"])),
         ])
         await #expect(throws: RelayError.writeNotAllowed(step: "file")) {
-            try await WorkflowRunner(toolKits: [kit], toolServers: server).run(workflow, input: .text(""))
+            try await WorkflowExecutor(toolKits: [kit], toolServers: server).run(workflow, input: .text(""))
         }
         #expect(server.made.isEmpty)
+    }
+
+    @Test func exhaustedMCPBudgetNeverCallsTheToolOrAsksForWriteApproval() async {
+        let server = FakeToolServer([createIssue])
+        let asked = Asked()
+        let workflow = Workflow("Bounded MCP") { Step.useTool("file", kit: kit.id, tool: "create_issue", arguments: ["title": "x"]) }
+        await #expect(throws: RelayError.limitExceeded(.toolCalls)) {
+            try await WorkflowExecutor(writePolicy: asked.policy(true), toolKits: [kit], toolServers: server)
+                .run(workflow, input: .null, limits: .init(maxToolCalls: 0))
+        }
+        #expect(server.made.isEmpty)
+        #expect(asked.requests.isEmpty)
+    }
+
+    @Test func nativeMCPAgentCallsShareTheBudgetWithDirectToolSteps() async {
+        let server = FakeToolServer([search])
+        let model = ScriptedModel("model", replies: [#"<tool:search_issues>{"query":"x"}"#, "unused"])
+        let workflow = Workflow("MCP budget") {
+            Step.useTool("first", kit: kit.id, tool: search.name, arguments: ["query": "x"])
+            Step.agent("second", "Find", kits: [kit.id], model: "model")
+        }
+        await #expect(throws: RelayError.limitExceeded(.toolCalls)) {
+            try await WorkflowExecutor(catalog: .scripted(["model": model]), toolKits: [kit], toolServers: server)
+                .run(workflow, input: .null, limits: .init(maxToolCalls: 1))
+        }
+        #expect(server.made.count == 1)
     }
 
     @Test func useAToolRunsRequestToolsFromAKit() async throws {
@@ -108,7 +134,7 @@ private final class Asked: Sendable {
         let workflow = Workflow(name: "W", steps: [
             Step("now", .useTool(kit: "weather", tool: "forecast", arguments: ["city": "{{input}}"])),
         ])
-        let report = try await WorkflowRunner(requests: api, toolKits: [weather]).run(workflow, input: .text("Lisbon"))
+        let report = try await WorkflowExecutor(requests: api, toolKits: [weather]).run(workflow, input: .text("Lisbon"))
         #expect(report.output["temp"] == .number(19))
         #expect(api.requests.first?.url.absoluteString == "https://api.example.com/w?q=Lisbon")
     }
@@ -116,10 +142,10 @@ private final class Asked: Sendable {
     @Test func missingToolsAndServersFailClearly() async throws {
         let workflow = Workflow(name: "File", steps: [Step("file", .useTool(kit: "linear", tool: "nope", arguments: [:]))])
         await #expect(throws: RelayError.stepFailed(step: "file", reason: "Linear has no tool “nope”")) {
-            try await WorkflowRunner(toolKits: [kit], toolServers: FakeToolServer([createIssue])).run(workflow, input: .text(""))
+            try await WorkflowExecutor(toolKits: [kit], toolServers: FakeToolServer([createIssue])).run(workflow, input: .text(""))
         }
         await #expect(throws: RelayError.stepFailed(step: "file", reason: "tool servers can't be reached here")) {
-            try await WorkflowRunner(toolKits: [kit]).run(workflow, input: .text(""))
+            try await WorkflowExecutor(toolKits: [kit]).run(workflow, input: .text(""))
         }
     }
 

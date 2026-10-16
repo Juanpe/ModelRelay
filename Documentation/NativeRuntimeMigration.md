@@ -46,7 +46,7 @@ let workflow = Workflow("Normalize") {
     }
     Step.template("message", "Cleaned: {{clean}}")
 }
-let report = try await WorkflowRunner().run(workflow, input: .text("  Hello  "))
+let report = try await WorkflowExecutor().run(workflow, input: .text("  Hello  "))
 ```
 
 Custom bodies are Sendable async throwing closures. They receive an immutable
@@ -54,7 +54,7 @@ value snapshot (`input`, `workflowInput`, `results`, or `context["step"]`).
 They execute once without fallback; cancellation and timeout are cooperative.
 They have the developer's ambient authority, including captured resources:
 WritePolicy does not sandbox arbitrary Swift code. The context itself does
-not expose runner secrets or transports.
+not expose executor secrets or transports.
 
 Custom closures cannot be encoded or decoded. Saving a containing workflow,
 including a nested custom body, throws explicitly. Declarative-only
@@ -76,11 +76,16 @@ an identical repeated tool round. After any host tool attempt, failure never
 switches models or replays the write.
 
 Reusing a model still does **not** implicitly share conversation history.
-Each model step creates a fresh native session. Pass selected earlier results
-through values/templates for explicit context handoff. Persistent agent
-memory and context budgeting are not implemented by this migration.
+Steps are isolated by default. The subsequent [context/policy layer](ContextAndPolicies.md)
+adds opt-in run-local native conversations, selected-value handoff and
+coalesced model factory loads. Persistent memory across runs and context
+budgeting remain unimplemented.
 
-## Verification
+The later [recovery layer](Recovery.md) adds host-stored execution checkpoints
+and approval/resume with native history restoration within one logical run.
+It does not introduce a second session runtime or serialize executable bodies.
+
+## Verification at the runtime migration checkpoint
 
 With Swift 6.4 / Xcode 27 on macOS 27, the default suite passes with
 warnings-as-errors: **103 core + 30 network/provider/MCP test definitions**,

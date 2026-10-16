@@ -35,8 +35,14 @@ public struct DecisionsAPIModel: DecisionModel, Hashable, CustomStringConvertibl
         if zeroDataRetention, baseURL.host() == Self.aiGateway.host() {
             body["providerOptions"] = ["gateway": ["zeroDataRetention": true]]
         }
-        let reply = try await CloudHTTP.postJSON(baseURL.appending(path: "decisions"),
-                                                 headers: ["Authorization": "Bearer \(apiKey)"], body: body)
+        let reply: [String: Any]
+        do {
+            reply = try await CloudHTTP.postJSON(baseURL.appending(path: "decisions"),
+                headers: ["Authorization": "Bearer \(apiKey)"], body: body)
+        } catch var error as CloudModelError {
+            if !apiKey.isEmpty { error.message = error.message.replacingOccurrences(of: apiKey, with: "•••") }
+            throw error
+        }
         let answers = reply["answers"] as? [[String: Any]] ?? []
         // Answers come back in question order.
         return try zip(questions, answers).map { question, answer in

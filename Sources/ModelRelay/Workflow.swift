@@ -34,13 +34,24 @@ public struct Step: Codable, Sendable, Hashable {
     /// fails or returns invalid output. Steps that need no model ignore both.
     public var model: ModelID?
     public var fallback: ModelID?
+    /// Nil means isolated. Sharing requires an explicit run-local conversation.
+    public var context: StepContext?
+    /// Optional restrictions; they cannot weaken the executor or a parent block.
+    public var policy: WorkflowExecutionPolicy?
+    /// Pause before this top-level step in a recoverable execution. This is
+    /// separate from WritePolicy: approving a step never grants tool permission.
+    public var approval: String?
 
-    public init(_ name: String, _ kind: Kind, input: String? = nil, model: ModelID? = nil, fallback: ModelID? = nil) {
+    public init(_ name: String, _ kind: Kind, input: String? = nil, model: ModelID? = nil, fallback: ModelID? = nil,
+                context: StepContext? = nil, policy: WorkflowExecutionPolicy? = nil, approval: String? = nil) {
         self.name = name
         self.kind = kind
         self.input = input
         self.model = model
         self.fallback = fallback
+        self.context = context
+        self.policy = policy
+        self.approval = approval
     }
 
     public indirect enum Kind: Codable, Sendable, Hashable {
@@ -59,10 +70,9 @@ public struct Step: Codable, Sendable, Hashable {
         /// A model that may call the given tools (HTTP requests) before
         /// answering in text. At most `AgentTool.maxCallsPerStep` calls.
         /// `kits` names reusable `ToolKit`s (by id) whose tools are added to
-        /// `tools`; the runner is given the kits.
-        /// Each step starts a fresh session, even when its model and tools
-        /// are reused. Earlier results reach it as input values or template
-        /// substitutions, not as conversation history.
+        /// `tools`; the executor is given the kits.
+        /// Isolated by default; opt into native history with StepContext.
+        /// Tools and permissions are resolved again for every step.
         case agent(instruction: String, tools: [AgentTool], kits: [String]? = nil)
         /// Answers typed questions about the text (yes/no, one of, score) in
         /// one go. A `DecisionModel` also gives probabilities; a language model

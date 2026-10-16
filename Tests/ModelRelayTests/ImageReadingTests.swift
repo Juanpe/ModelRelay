@@ -33,9 +33,9 @@ func picture(_ text: String = "", width: Int = 900, height: Int = 220) -> Data {
 
     @Test func theModelSeesTheImageAndTheInstruction() async throws {
         let model = ScriptedModel("eyes", replies: ["TOTAL 8.30"])
-        let runner = WorkflowRunner(catalog: .scripted(["eyes": model]))
+        let executor = WorkflowExecutor(catalog: .scripted(["eyes": model]))
         let image = ImageValue(data: picture(), contentType: "image/png")
-        let report = try await runner.run(reader(), input: .image(image))
+        let report = try await executor.run(reader(), input: .image(image))
         #expect(report.output == .text("TOTAL 8.30"))
         #expect(model.images.count == 1)
         #expect(model.images.first.flatMap { image in
@@ -51,17 +51,17 @@ func picture(_ text: String = "", width: Int = 900, height: Int = 220) -> Data {
 
     @Test func instructionsCanUseTheTextThatCameWithTheImage() async throws {
         let model = ScriptedModel("eyes", replies: ["8.30"])
-        let runner = WorkflowRunner(catalog: .scripted(["eyes": model]))
+        let executor = WorkflowExecutor(catalog: .scripted(["eyes": model]))
         let image = ImageValue(data: picture(), contentType: "image/png", text: "the total")
-        _ = try await runner.run(reader("Find {{input}} on this receipt."), input: .image(image))
+        _ = try await executor.run(reader("Find {{input}} on this receipt."), input: .image(image))
         #expect(model.prompts.first == "Find the total on this receipt.")
     }
 
     @Test func textInsteadOfAnImageFailsClearly() async throws {
         let model = ScriptedModel("eyes", replies: ["never"])
-        let runner = WorkflowRunner(catalog: .scripted(["eyes": model]))
+        let executor = WorkflowExecutor(catalog: .scripted(["eyes": model]))
         await #expect(throws: RelayError.stepFailed(step: "read", reason: "it needs an image, and got text")) {
-            try await runner.run(reader(), input: .text("A web page"))
+            try await executor.run(reader(), input: .text("A web page"))
         }
         #expect(model.callCount == 0)
     }
@@ -69,32 +69,32 @@ func picture(_ text: String = "", width: Int = 900, height: Int = 220) -> Data {
     @Test func aModelThatCantSeeImagesGoesToTheFallback() async throws {
         let blind = ScriptedModel("blind", replies: ["guess"], seesImages: false)
         let eyes = ScriptedModel("eyes", replies: ["Hello"])
-        let runner = WorkflowRunner(catalog: .scripted(["blind": blind, "eyes": eyes]))
+        let executor = WorkflowExecutor(catalog: .scripted(["blind": blind, "eyes": eyes]))
         let image = ImageValue(data: picture(), contentType: "image/png")
-        let report = try await runner.run(reader(model: "blind", fallback: "eyes"), input: .image(image))
+        let report = try await executor.run(reader(model: "blind", fallback: "eyes"), input: .image(image))
         #expect(report.output == .text("Hello"))
         #expect(report.records.first?.usedFallback == true)
         #expect(blind.callCount == 0)
 
-        await #expect(throws: RelayError.stepFailed(step: "read", reason: "blind can't read images. Choose a model that can see them")) {
-            try await runner.run(reader(model: "blind"), input: .image(image))
+        await #expect(throws: WorkflowValidationError(issues: [.init(step: "read", kind: .incompatibleModel, detail: "no configured model supports this step")])) {
+            try await executor.run(reader(model: "blind"), input: .image(image))
         }
     }
 
     @Test func aBrokenImageFails() async throws {
-        let runner = WorkflowRunner(catalog: .scripted(["eyes": ScriptedModel("eyes", replies: ["x"])]))
-        await #expect(throws: RelayError.stepFailed(step: "read", reason: "The image couldn't be opened")) {
-            try await runner.run(reader(), input: .image(ImageValue(data: Data("not a picture".utf8), contentType: "image/png")))
+        let executor = WorkflowExecutor(catalog: .scripted(["eyes": ScriptedModel("eyes", replies: ["x"])]))
+        await #expect(throws: expectedOperationFailure(step: "read", reason: "The image couldn't be opened", category: .invalidOutput)) {
+            try await executor.run(reader(), input: .image(ImageValue(data: Data("not a picture".utf8), contentType: "image/png")))
         }
     }
 
     @Test func appleTextRecognitionOnlyReadsImages() async throws {
         let workflow = Workflow(name: "Ask", steps: [Step("ask", .prompt(instruction: "Say hi."), model: .appleTextRecognition)])
         do {
-            _ = try await WorkflowRunner().run(workflow, input: .text(""))
+            _ = try await WorkflowExecutor().run(workflow, input: .text(""))
             Issue.record("A text prompt should fail")
-        } catch RelayError.stepFailed(_, let reason) {
-            #expect(reason.contains("only reads the text in images"))
+        } catch let error as WorkflowValidationError {
+            #expect(error.issues.contains { $0.step == "ask" && $0.kind == .incompatibleModel })
         }
     }
 

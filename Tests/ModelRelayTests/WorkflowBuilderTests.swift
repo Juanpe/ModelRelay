@@ -160,7 +160,7 @@ import ModelRelay
     @Test func builtWorkflowRunsExtractionParallelAndRuntimeBranches() async throws {
         let extract = ScriptedModel("extract", replies: [#"{"merchant":"Coffee","total":8.3}"#])
         let tone = ScriptedModel("tone", replies: [#""positive""#])
-        let runner = WorkflowRunner(catalog: .scripted(["extract": extract, "tone": tone]))
+        let executor = WorkflowExecutor(catalog: .scripted(["extract": extract, "tone": tone]))
         let workflow = Workflow("Receipt") {
             Step.extract("expense", instruction: "Extract the receipt.", model: "extract") {
                 Field("merchant", .text)
@@ -177,7 +177,7 @@ import ModelRelay
             }
         }
         #expect(workflow.referenceIssues.isEmpty)
-        let report = try await runner.run(workflow, input: .text("Coffee 8.30"))
+        let report = try await executor.run(workflow, input: .text("Coffee 8.30"))
         #expect(report.output == .text("Coffee: 8.3"))
         #expect(report.records.first { $0.step == "no" }?.skipped == true)
         #expect(extract.callCount == 1 && tone.callCount == 1)
@@ -192,9 +192,9 @@ import ModelRelay
             }
             Step.template("last", "Not the selected output")
         }
-        let runner = WorkflowRunner()
-        #expect(try await runner.run(workflow, input: .text("yes")).output == .text("Accepted"))
-        #expect(try await runner.run(workflow, input: .text("no")).output == .text("Rejected"))
+        let executor = WorkflowExecutor()
+        #expect(try await executor.run(workflow, input: .text("yes")).output == .text("Accepted"))
+        #expect(try await executor.run(workflow, input: .text("no")).output == .text("Rejected"))
     }
 
     @Test func reusingAnAgentConfigurationDoesNotShareItsConversation() async throws {
@@ -206,7 +206,7 @@ import ModelRelay
             assistant("first", "FIRST_INSTRUCTION_ONLY")
             assistant("second", "SECOND_INSTRUCTION_ONLY", input: "input")
         }
-        let report = try await WorkflowRunner(catalog: .scripted(["shared": model])).run(workflow, input: .text("ORIGINAL_INPUT"))
+        let report = try await WorkflowExecutor(catalog: .scripted(["shared": model])).run(workflow, input: .text("ORIGINAL_INPUT"))
         #expect(report.output == .text("SECOND_RESULT_ONLY"))
         #expect(model.callCount == 2)
         #expect(model.prompts.count == 2)
@@ -223,7 +223,7 @@ import ModelRelay
             Step.agent("first", "FIRST_INSTRUCTION_ONLY", model: "shared")
             Step.agent("second", "SECOND_INSTRUCTION_ONLY", model: "shared")
         }
-        _ = try await WorkflowRunner(catalog: .scripted(["shared": model])).run(workflow, input: .text("ORIGINAL_INPUT_ONLY"))
+        _ = try await WorkflowExecutor(catalog: .scripted(["shared": model])).run(workflow, input: .text("ORIGINAL_INPUT_ONLY"))
         let second = try #require(model.prompts.last)
         #expect(second.contains("FIRST_RESULT_ONLY"))
         #expect(!second.contains("FIRST_INSTRUCTION_ONLY"))

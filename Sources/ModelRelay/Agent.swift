@@ -100,10 +100,37 @@ struct RequestContext: Sendable {
     var secrets: (any SecretProvider)?
     var writePolicy: WritePolicy
     var timeout: Duration
+    var policy: WorkflowExecutionPolicy = .unrestricted
+    var control: ExecutionControl? = nil
 
     /// `trace`, when given, receives the request as sent, with secrets hidden.
     func perform(_ request: HTTPRequest, step: String, trace: StepTrace? = nil,
+                 toolName: String? = nil,
+                 onDispatch: (@Sendable () -> Void)? = nil,
                  resolve: (String) -> Value?) async throws -> Value {
+        try Task.checkCancellation()
+        try policy.checkNetwork(step: step)
+        try policy.checkTool(changesSomething: request.method.isWrite, step: step)
+        guard requests != nil else { throw RelayError.requestsUnavailable(step: step) }
+        let templates = [request.url, request.body ?? ""] + request.headers.map(\.value)
+        for ref in templates.flatMap({ Template.references(in: $0) }) where !ref.hasPrefix("secret.") {
+            guard resolve(ref) != nil else { throw RelayError.unknownReference(ref, step: step) }
+        }
+        let name = toolName ?? step
+        try control?.beginTool(name, step: step)
+        do {
+            let result = try await performBody(request, step: step, trace: trace, onDispatch: onDispatch, resolve: resolve)
+            control?.emit(.toolCompleted, step: step, tool: name)
+            return result
+        } catch {
+            control?.emit(.toolFailed, step: step, tool: name, category: failureCategory(error))
+            throw error
+        }
+    }
+
+    private func performBody(_ request: HTTPRequest, step: String, trace: StepTrace?,
+                             onDispatch: (@Sendable () -> Void)?,
+                             resolve: (String) -> Value?) async throws -> Value {
         guard let requests else { throw RelayError.requestsUnavailable(step: step) }
         var values: [String: String] = [:]
         for name in RequestBuilder.secretNames(in: request) {
@@ -116,23 +143,24 @@ struct RequestContext: Sendable {
         do {
             prepared = try RequestBuilder.prepare(request, secrets: values, resolve: resolve)
         } catch {
-            throw RelayError.stepFailed(step: step, reason: failureReason(error))
+            throw operationFailure(step: step, error: error, secrets: Array(values.values))
         }
         trace?.input = prepared.description
         if request.method.isWrite { try await authorize(prepared, step: step) }
         // One attempt only: a write that timed out may still have happened.
         do {
-            let response = try await withTimeout(timeout) { try await requests.perform(prepared) }
-            return try RequestBuilder.value(from: response, reading: request.reading)
+            let response = try await withTimeout(timeout) {
+                onDispatch?()
+                return try await requests.perform(prepared)
+            }
+            let result = try RequestBuilder.value(from: response, reading: request.reading)
+            return result
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            // An error page can quote the request back: hide the secrets.
-            var reason = failureReason(error)
-            for secret in prepared.secrets where !secret.isEmpty {
-                reason = reason.replacingOccurrences(of: secret, with: "•••")
-            }
-            throw RelayError.stepFailed(step: step, reason: reason)
+            // Preserve the cause in memory; only the diagnostic is redacted.
+            if case RelayError.limitExceeded = error { throw error }
+            throw operationFailure(step: step, error: error, uncertain: request.method.isWrite, secrets: prepared.secrets)
         }
     }
 }
@@ -141,6 +169,7 @@ extension RequestContext {
     /// Throws unless the write policy lets `prepared` (something that
     /// changes something) go ahead.
     func authorize(_ prepared: PreparedRequest, step: String) async throws {
+        try policy.checkTool(changesSomething: true, step: step)
         let allowed = switch writePolicy {
         case .allow: true
         case .deny: false
@@ -173,16 +202,28 @@ struct ServerToolCall: Tool {
     }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        try Task.checkCancellation()
         try log.record(tool.name)
+        try context.policy.checkNetwork(step: step)
+        try context.policy.checkTool(changesSomething: tool.changesSomething, step: step)
         var values: [String: Value] = [:]
         if case .dictionary(let fields) = Value(arguments) { values = fields }
-        if tool.changesSomething {
-            try await context.authorize(ServerCallDescription.prepared(kit: kit, tool: tool.name, arguments: values), step: step)
+        try context.control?.beginTool(tool.name, step: step)
+        var dispatched = false
+        do {
+            if tool.changesSomething {
+                try await context.authorize(ServerCallDescription.prepared(kit: kit, tool: tool.name, arguments: values), step: step)
+            }
+            dispatched = true
+            if tool.changesSomething { log.markWriteDispatched() }
+            let text = try await connection.call(tool.name, arguments: values).jsonText
+            context.control?.emit(.toolCompleted, step: step, tool: tool.name)
+            return text.count > AgentTool.maxOutputCharacters ? String(text.prefix(AgentTool.maxOutputCharacters)) + "…" : text
+        } catch {
+            context.control?.emit(.toolFailed, step: step, tool: tool.name, category: failureCategory(error))
+            if error is CancellationError { throw error }
+            throw operationFailure(step: step, error: error, uncertain: dispatched && tool.changesSomething)
         }
-        let text = try await connection.call(tool.name, arguments: values).jsonText
-        return text.count > AgentTool.maxOutputCharacters
-            ? String(text.prefix(AgentTool.maxOutputCharacters)) + "…"
-            : text
     }
 }
 
@@ -203,7 +244,7 @@ func withTimeout<T: Sendable>(_ limit: Duration, message: String? = nil,
         group.addTask { try await work() }
         group.addTask {
             try await Task.sleep(for: limit)
-            throw InvalidOutput(reason: message ?? "No answer within \(limit)")
+            throw OperationTimeout(description: message ?? "No answer within \(limit)")
         }
         defer { group.cancelAll() }
         return try await group.next()!
@@ -212,22 +253,28 @@ func withTimeout<T: Sendable>(_ limit: Duration, message: String? = nil,
 
 /// The tools one agent step called, shared by its tools to enforce the limit.
 final class ToolCallLog: Sendable {
-    private let names = Mutex<[String]>([])
+    private struct State { var names: [String] = []; var active = true; var wrote = false }
+    private let state = Mutex(State())
     let limit: Int
 
     init(limit: Int) {
         self.limit = limit
     }
 
-    var calls: [String] { names.withLock { $0 } }
+    var calls: [String] { state.withLock { $0.names } }
+    var mayHaveWritten: Bool { state.withLock { $0.wrote } }
+    func markWriteDispatched() { state.withLock { $0.wrote = true } }
+    /// A backend retaining an old tool wrapper must not use it in a later step.
+    func finish() { state.withLock { $0.active = false } }
 
     /// Records a call, or throws once the step has used all its calls.
     func record(_ name: String) throws {
-        try names.withLock { names in
-            guard names.count < limit else {
+        try state.withLock { state in
+            guard state.active else { throw InvalidOutput(reason: "This step's tool access has ended") }
+            guard state.names.count < limit else {
                 throw InvalidOutput(reason: "The model called tools more than \(limit) times")
             }
-            names.append(name)
+            state.names.append(name)
         }
     }
 }
@@ -248,9 +295,12 @@ struct RequestTool: Tool {
     }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        try Task.checkCancellation()
         try log.record(spec.name)
         let args = Value(arguments)
-        let value = try await context.perform(spec.request, step: step) { reference in
+        let value = try await context.perform(spec.request, step: step, toolName: spec.name, onDispatch: {
+            if spec.request.method.isWrite { log.markWriteDispatched() }
+        }) { reference in
             if reference.hasPrefix("args.") { return args[String(reference.dropFirst("args.".count))] }
             return resolve(reference)
         }
@@ -298,6 +348,10 @@ func failureReason(_ error: any Error) -> String {
         return "\(toolError.tool.name): \(failureReason(toolError.underlyingError))"
     }
     if case RelayError.stepFailed(_, let reason) = error { return reason }
+    if case RelayError.operationFailed(_, let failure) = error { return failure.info.message }
+    if let error = error as? WorkflowValidationError { return "Invalid workflow: " + error.issues.map { "\($0.step): \($0.detail)" }.joined(separator: "; ") }
+    if case RelayError.policyViolation(_, let reason) = error { return reason }
+    if case RelayError.invalidContext(_, let reason) = error { return reason }
     if case RelayError.writeNotAllowed = error { return "it wanted to change something and wasn't allowed" }
     if case RelayError.missingSecret(let name, _) = error { return "the key \(name) is missing" }
     if case RelayError.unknownModel(let id) = error { return "the model “\(id.rawValue)” isn't available" }

@@ -12,8 +12,9 @@ MLX models all use the same session API. There is no second session runtime
 or transcript bridge inside ModelRelay.
 
 ModelRelay is a standalone SDK, not an application framework. It owns
-workflow orchestration, typed values, permissions, fallback and tracing,
-not UI, accounts or persistence. This package still targets Apple OS 27;
+workflow orchestration, typed values, permissions, fallback, tracing and
+recoverable execution state, not UI, accounts or storage implementations.
+This package still targets Apple OS 27;
 provider independence is not a claim of Linux or older-OS support.
 
 ## What can you build?
@@ -55,7 +56,8 @@ Turn a photographed receipt into a reviewed expense:
 The app owns image capture, storage and the review UI. ModelRelay connects
 the model steps, deterministic Swift code and submission policy. Custom
 bodies are trusted host code, not sandboxed by the write policy, and make
-their containing workflow in-memory only.
+their containing workflow definition non-serializable. The app can reconstruct
+it in Swift and separately restore a recoverable execution's data checkpoint.
 
 ## Installation
 
@@ -116,12 +118,12 @@ let workflow = Workflow("Receipt to expense") {
     }
 }
 
-let report = try await WorkflowRunner().run(workflow, input: .text("BLUE BOTTLE COFFEE\nTOTAL EUR 8.30"))
+let report = try await WorkflowExecutor().run(workflow, input: .text("BLUE BOTTLE COFFEE\nTOTAL EUR 8.30"))
 print(report.output["total"]?.textValue ?? "")   // 8.3
 ```
 
 This example needs Apple's on-device model to be available. A fallback such
-as an MLX or cloud model must first be registered in the runner's catalog.
+as an MLX or cloud model must first be registered in the executor's catalog.
 
 For a complete consumer package that runs without credentials or a model,
 see [StandaloneClient](Examples/StandaloneClient). From this checkout:
@@ -137,9 +139,11 @@ swift run --package-path Examples/StandaloneClient StandaloneClient --apple
 - Build data with `Workflow`, `Step`, `Field` and `Value`, using arrays or builders.
 - Register model factories in `ModelCatalog`. The default catalog includes
   Apple's on-device model, Private Cloud Compute and text recognition.
-- Create a `WorkflowRunner` with that catalog and any optional integrations.
-- Call `run(_:input:onStep:)`. It returns a `RunReport`; `onStep` receives
-  completed, skipped and failed step records, not token-streaming events.
+- Create a `WorkflowExecutor` with that catalog and any optional integrations.
+- Call `run` with input and optional policy/limits/observers. It returns a `WorkflowExecutionReport`;
+  `onStep` receives completed, skipped and failed step records, not token-streaming events.
+- Use `start`/`resume` with a host-owned `WorkflowExecutionCheckpointStore` for recovery
+  or `requiringApproval` gates. Completed steps are not automatically replayed.
 - Encode/decode declarative `Workflow` values if your host needs persistence;
   compiled custom bodies intentionally cannot be serialized.
   ModelRelay does not store workflows, credentials or execution reports.
@@ -148,6 +152,11 @@ swift run --package-path Examples/StandaloneClient StandaloneClient --apple
 
 - **Workflow**: steps that run top to bottom. `ifEquals` and `parallel` are
   blocks that contain steps, so a workflow is a small tree, never a free graph.
+- **Execution**: one invocation of that reusable definition, managed by
+  `WorkflowExecutor`. `run` returns a `WorkflowExecutionReport`; recoverable
+  `start`/`resume` return a `WorkflowExecutionOutcome` and use a
+  `WorkflowExecutionCheckpoint`. Each checkpoint's `executionID` identifies
+  that invocation, while `workflowID` identifies its definition.
 - **Step**: `prompt` (text), `extract` (typed fields, guided generation),
   `classify` (one label), `template` (`{{step.field}}` substitution, no model),
   `request` (an HTTP API call; a JSON response becomes fields), `agent` (a
@@ -205,13 +214,14 @@ let workflow = Workflow("Route message") {
 
 `Step.switchOn` accepts `[SwitchCase]`; `SwitchCase("value") { ... }`
 builds a case's steps. The trailing block of `Step.switchOn` builds its default branch.
-`WorkflowBuilder` is syntax sugar, not a validator: check `referenceIssues`
-before execution and keep step names unique, just as with array-built workflows.
+`WorkflowBuilder` is syntax sugar, not a validator. The executor validates
+definitions before execution; use `await executor.validate(workflow)` to
+preview diagnostics. `referenceIssues` remains available for reference-only checks.
 
 ## Execution and context
 
 - Each run has its own input, previous value, named results and step records.
-  Reusing a runner does not retain a conversation between runs.
+  Reusing an executor does not retain a conversation between runs.
 - A step with no explicit `input` receives the previous result. Use
   `input: "input"` for the original input, `input: "expense"` for a named
   result, or `input: "expense.total"` for one of its fields.
@@ -222,8 +232,8 @@ before execution and keep step names unique, just as with array-built workflows.
   results. The block returns a dictionary keyed by child name; after it,
   results are available as `{{analysis.tone}}` or `{{tone}}`.
 - `output: "result"` selects a named step's full result. Without it, the last
-  result is returned. An unresolved output name currently also falls back to
-  the last result; validate references before execution.
+  result is returned. An invalid explicit output is rejected, not silently
+  replaced with the last result. Missing template references also fail explicitly.
 
 `stepTimeout` defaults to 30 seconds per bounded operation, not per workflow.
 A fallback has its own attempt. Timeouts and task cancellation are cooperative;
@@ -232,6 +242,31 @@ guarantees and cannot override deadlines imposed by the host OS or caller.
 
 See [SDK integration](Documentation/Integration.md) for ownership, model
 resources, MCP authentication and the current limitations.
+
+### Validation, events and limits
+
+```swift
+let executor = WorkflowExecutor(limits: .init(
+    maxDuration: .seconds(60), maxModelCalls: 8,
+    maxToolCalls: 12, maxConcurrentSteps: 2
+))
+let issues = await executor.validate(workflow) // No model factories or MCP discovery.
+let report = try await executor.run(workflow, input: input,
+    onEvent: { event in print(event.kind.rawValue, event.step ?? "") })
+print(report.executionID, report.usage.modelCalls, report.usage.toolCalls)
+```
+
+Invalid definitions throw `WorkflowValidationError` before work. Operational
+failures retain typed causes in `RelayError.operationFailed`; serializable
+summaries go into step records, not raw errors. Metadata-only events cover
+steps, models, tools, fallback, approvals and successful checkpoint saves.
+Events contain no prompts, arguments, results or raw error messages.
+
+Limits are shared across parallel branches and cannot be expanded on resume.
+They count executor-mediated attempts, not hidden provider HTTP rounds or tokens.
+Duration/cancellation are cooperative; a cutoff never proves a write failed.
+See [execution safety](Documentation/ExecutionSafety.md) for exact semantics,
+typed error handling, sensitive-data boundaries and checkpoint accounting.
 
 ## APIs and cloud models
 
@@ -249,16 +284,16 @@ import ModelRelayHTTP
 let workflow = Workflow("Weather") {
     Step.request("weather", HTTPRequest(url: "https://api.example.com/weather?q={{input}}"))
 }
-let runner = WorkflowRunner(requests: URLSessionRequestPerformer())
-// Supply your API's real URL before calling runner.run(workflow, input: ...).
+let executor = WorkflowExecutor(requests: URLSessionRequestPerformer())
+// Supply your API's real URL before calling executor.run(workflow, input: ...).
 ```
 
 - The core has no network code: pass `URLSessionRequestPerformer()` from
-  `ModelRelayHTTP` (or your own `RequestPerformer`) to `WorkflowRunner`.
+  `ModelRelayHTTP` (or your own `RequestPerformer`) to `WorkflowExecutor`.
 - `{{secret.NAME}}` comes from a `SecretProvider` you supply (for example the
   Keychain), works only in request steps, and is hidden in descriptions.
 - Calls that change something (POST, PUT, PATCH, DELETE) are denied unless the
-  runner's `WritePolicy` is `.allow` or `.ask { request in … }`. No request is
+  executor's `WritePolicy` is `.allow` or `.ask { request in … }`. No request is
   ever retried.
 - `HTTPRequest(url: "{{input}}", reading: .page)` reads a web page: the result
   is its title and readable text, without scripts, menus or markup. A URL
@@ -279,39 +314,107 @@ One agent step makes at most six calls, and once a tool has run, a failure is
 not retried on the fallback model, so nothing is done twice.
 
 Tools can be grouped in a `ToolKit` and shared: an agent names kits by id
-(`.agent(instruction:tools:kits:)`) and the runner is given the kits.
+(`.agent(instruction:tools:kits:)`) and the executor is given the kits.
 
-### Reusing agents and model sessions
+### Explicit conversations and handoff
 
-An agent is a step's configuration, not a persistent actor or conversation.
-Reuse the same tools, kit IDs and model ID in multiple steps, or wrap that
-configuration in a function that returns a `Step`:
+Steps are isolated by default. Opt into one native conversation within a run:
 
 ```swift
-func assistant(_ name: String, instruction: String, input: String? = nil) -> Step {
-    Step.agent(name, instruction, kits: ["research"], input: input, model: "writer")
-}
-
 let workflow = Workflow("Draft and review") {
-    assistant("draft", instruction: "Write a short answer.")
-    assistant("review", instruction: "Review and improve the draft.")
+    Step.agent("draft", "Write a short answer.", model: .appleOnDevice)
+        .withContext(.conversation("writer"))
+    Step.agent("review", "Review your previous answer.", input: "input", model: .appleOnDevice)
+        .withContext(.conversation("writer"))
+    Step.prompt("editor", "Edit only the selected result.", model: "editor")
+        .withContext(.handoff(["review"]))
 }
 ```
 
-Here the runner must have a registered `writer` model and a `research` tool
-kit. Each agent step creates a **fresh `LanguageModelSession`**. The review
-step receives the draft as its input value, not the draft's full conversation
-or tool-call history. Use `input: "input"` to read the original workflow
-input instead, or templates to pass selected earlier results explicitly.
+The first two steps reuse the same native session. The editor starts fresh,
+receiving a dictionary of selected values, not the previous input or tool
+history. Do not combine handoff with an explicit `input`. Explicit instruction
+templates still work as usual. The `editor` model must be registered.
 
-Model factories may return a shared model instance or backend; fresh sessions
-do not themselves require downloading or loading model weights twice. Within
-one agent step, tool calls and their results belong to that step's session.
-Conversation memory between steps or runs is not managed by ModelRelay.
+Conversations are keyed by **name and model ID**, never shared across runs.
+A different provider, including a fallback, has its own history: ModelRelay
+never silently replays another provider's opaque transcript. Use handoff
+for intentional cross-model context transfer. Parallel branches cannot use
+the same conversation/model; this is rejected before execution.
 
-There is no separate named `Agent` object or automatic handoff of an entire
-workflow transcript today. Share selected results explicitly; a different
-agent receives only the input and prompt you give its step.
+Model/decision factories are coalesced and cached once per ID within an active
+run invocation. Resuming after a pause creates fresh resource caches lazily.
+A timed-out waiter does not cancel another step's pending load. Return a
+shared backend if you want resource reuse across runs; weights and KV-cache
+behavior still belong to the provider. Each step rebinds its current tools,
+permissions, argument resolver and call budget; old tool wrappers are not reused.
+Resuming a recoverable execution restores its explicit histories as part of
+the same logical run, rather than sharing them with an unrelated run.
+
+### Execution and data policies
+
+```swift
+let executor = WorkflowExecutor(policy: .localOnly)
+let workflow = Workflow("Private review") {
+    Step.prompt("draft", "Summarize.", model: .appleOnDevice)
+        .withContext(.conversation("reviewer"))
+    Step.agent("review", "Review the summary.", model: .appleOnDevice)
+        .withContext(.conversation("reviewer"))
+        .withPolicy(.readOnly)
+}
+```
+
+- `.localOnly` requires a model explicitly declared local and blocks all
+  executor-mediated HTTP/MCP operations, including reads. A remote or unspecified
+  fallback is blocked **before its factory runs**, not merely before inference.
+- `.readOnly` removes write tools from agents and rejects write requests/tool
+  calls. `.noTools` also blocks reads and avoids MCP connections. WritePolicy
+  approval cannot override these restrictions.
+- Apply policy to the executor, narrow one `run(..., policy:)`, or narrow a
+  step/block with `withPolicy`.
+  Children cannot relax parent restrictions. A local-only result stays local
+  through references, templates, handoffs, branches, merges and conversations.
+  Custom outputs conservatively inherit all data accessible in their context.
+- Model registration accepts `location: .local`, `.remote` or `.unspecified`.
+  On-device/OCR and MLX presets are local; Private Cloud Compute is remote.
+  Locality is a host assertion, not inferred from a URL or model name.
+- This is **not a sandbox or automatic PII detection**. Trusted providers,
+  custom bodies, callbacks and captured host resources remain your responsibility.
+  MCP read-only metadata must be trustworthy; it cannot prove a remote tool's
+  actual behavior. Labels are run-local: carry `WorkflowExecutionReport.outputDataAccess`
+  into the next run's policy when handing its output to another run.
+
+See [context and policy semantics](Documentation/ContextAndPolicies.md) for
+fallback, concurrency, privacy propagation and trust boundaries.
+
+### Checkpoints and human review
+
+```swift
+// Keep the workflow UUID stable across invocations. The host supplies `store`.
+let workflow = Workflow("Review summary", id: workflowID) {
+    Step.prompt("draft", "Summarize the article.", model: .appleOnDevice)
+    Step.template("approved", "{{draft}}")
+        .requiringApproval("Review the summary before continuing")
+}
+
+let outcome = try await executor.start(workflow, input: article,
+                                     revision: "summary-v1", store: store)
+// If outcome is .awaitingApproval(checkpoint), show checkpoint.results["draft"].
+// Later, after the host obtains a decision (possibly with a new executor):
+// try await executor.resume(workflow, from: checkpoint, revision: "summary-v1",
+//                         approval: .approve, store: store)
+```
+
+The host implements **atomic, durable compare-and-swap** saves. Checkpoints
+retain confirmed values, privacy labels, records and native conversation
+history, not credentials, model resources or executable closures. Approval
+does not override write/privacy policies. Ordinary `run` rejects approval gates.
+
+Boundaries are top-level steps; a branch/parallel block is one recovery unit.
+An interrupted operation is **never replayed automatically**: a write may have
+succeeded before its result was saved. After external verification, the host
+can confirm a leaf's result without rerunning it. There is no exactly-once or
+OS background-execution guarantee. See [recovery semantics and storage contract](Documentation/Recovery.md).
 
 ## Images
 
@@ -324,20 +427,20 @@ the image was, never its bytes.
 import Foundation
 import ModelRelay
 
-func readReceipt(_ jpeg: Data, using runner: WorkflowRunner) async throws -> RunReport {
+func readReceipt(_ jpeg: Data, using executor: WorkflowExecutor) async throws -> WorkflowExecutionReport {
     let workflow = Workflow("Read receipt") {
         Step.readImage("receipt", instruction: "Read the total.",
                        model: "claude", fallback: .appleTextRecognition)
     }
-    return try await runner.run(workflow, input: .image(ImageValue(data: jpeg, contentType: "image/jpeg")))
+    return try await executor.run(workflow, input: .image(ImageValue(data: jpeg, contentType: "image/jpeg")))
 }
 ```
 
-The supplied runner must register `claude` as a vision-capable model.
+The supplied executor must register `claude` as a vision-capable model.
 
 - Native AnyLanguageModel providers encode the image for their APIs. Choose
   a model that actually supports vision and register it with
-  `supportsImages: true`. The runner validates and normalizes the input
+  `supportsImages: true`. The executor validates and normalizes the input
   image before handing it to the native session.
 - `.appleTextRecognition` reads it on device with Vision: nothing leaves the
   device and the instruction is ignored. Its first use in an app prepares
@@ -368,7 +471,7 @@ let workflow = Workflow("Normalize and summarize") {
         ])
     }
 }
-let report = try await WorkflowRunner().run(workflow, input: .text("  Article text  "))
+let report = try await WorkflowExecutor().run(workflow, input: .text("  Article text  "))
 ```
 
 - The body is `@Sendable (CustomStepContext) async throws -> Value`.
@@ -378,11 +481,13 @@ let report = try await WorkflowRunner().run(workflow, input: .text("  Article te
   cooperative cancellation and timeout. No fallback or automatic replay.
 - Custom bodies are **trusted developer code**, with the host's authority.
   They are not sandboxed by `WritePolicy`. The context contains values, not
-  the runner's transports or secrets; closures can still capture host resources.
-- Workflows containing custom bodies are **in-memory only**. Encoding fails
-  explicitly, including nested bodies. JSON cannot reconstruct a closure.
+  the executor's transports or secrets; closures can still capture host resources.
+- Workflow definitions containing custom bodies are **in-memory only**. Encoding
+  fails explicitly, including nested bodies. JSON cannot reconstruct a closure.
   Declarative-only workflows remain Codable. Reference renaming cannot
-  inspect keys hardcoded inside a closure.
+  inspect keys hardcoded inside a closure. For recovery, reconstruct that
+  definition in Swift and restore its separate data checkpoint; bump the host
+  revision when executable bodies or captures change.
 - A client wanting a code editor/interpreter can invoke its own runtime from
   a custom body. ModelRelay neither chooses that runtime nor executes model
   output as code. Blocking bodies cannot be forcibly terminated by a timeout.
@@ -397,11 +502,11 @@ directly.
 import ModelRelay
 import ModelRelayMCP
 
-func makeToolRunner(secrets: any SecretProvider, writePolicy: WritePolicy) -> WorkflowRunner {
+func makeToolExecutor(secrets: any SecretProvider, writePolicy: WritePolicy) -> WorkflowExecutor {
     let issues = ToolKit(id: "issues", name: "Issues", tools: [],
         server: ToolServer(url: "https://mcp.example.com/mcp",
                            headers: [.init("Authorization", "Bearer {{secret.ISSUES_KEY}}")]))
-    return WorkflowRunner(writePolicy: writePolicy, toolKits: [issues],
+    return WorkflowExecutor(writePolicy: writePolicy, toolKits: [issues],
                           toolServers: MCPConnector(secrets: secrets))
 }
 
@@ -434,9 +539,9 @@ schema, so the step also works offline and can fall back to Apple's model.
 import ModelRelay
 import ModelRelayCloud
 
-func makeDecisionRunner(apiKey: String) -> WorkflowRunner {
+func makeDecisionExecutor(apiKey: String) -> WorkflowExecutor {
     let catalog = ModelCatalog().registering(decisions: "jev") { DecisionsAPIModel(apiKey: apiKey) }
-    return WorkflowRunner(catalog: catalog)
+    return WorkflowExecutor(catalog: catalog)
 }
 
 let workflow = Workflow("Triage ticket") {
@@ -458,10 +563,10 @@ import AnyLanguageModel
 import Foundation
 import ModelRelay
 
-func makeCloudRunner(baseURL: URL, modelName: String, apiKey: String) -> WorkflowRunner {
+func makeCloudExecutor(baseURL: URL, modelName: String, apiKey: String) -> WorkflowExecutor {
     let model = OpenAILanguageModel(baseURL: baseURL, apiKey: apiKey, model: modelName)
     let catalog = ModelCatalog().registering("writer") { model }
-    return WorkflowRunner(catalog: catalog)
+    return WorkflowExecutor(catalog: catalog)
 }
 
 let workflow = Workflow("Cloud summary") {

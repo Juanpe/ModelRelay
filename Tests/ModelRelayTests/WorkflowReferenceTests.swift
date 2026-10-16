@@ -15,7 +15,7 @@ struct WorkflowReferenceTests {
         #expect(workflow.availableSteps(before: "no").map(\.name) == ["label"])
         #expect(workflow.availableSteps(before: "out").map(\.name) == ["label", "route"])
         #expect(workflow.referenceIssues.isEmpty)
-        let report = try await WorkflowRunner(catalog: .scripted(["model": model])).run(workflow, input: .text("Question"))
+        let report = try await WorkflowExecutor(catalog: .scripted(["model": model])).run(workflow, input: .text("Question"))
         #expect(report.output == .text("YES"))
     }
 
@@ -29,7 +29,7 @@ struct WorkflowReferenceTests {
         #expect(workflow.availableSteps(before: "b").isEmpty)
         #expect(workflow.availableSteps(before: "out").map(\.name) == ["a", "b", "both"])
         #expect(workflow.referenceIssues.isEmpty)
-        let report = try await WorkflowRunner(catalog: .scripted(["model": model])).run(workflow, input: .text("Question"))
+        let report = try await WorkflowExecutor(catalog: .scripted(["model": model])).run(workflow, input: .text("Question"))
         #expect(report.output == .text("A B"))
     }
 
@@ -44,7 +44,7 @@ struct WorkflowReferenceTests {
         #expect(workflow.steps[1].input == "receipt.value")
         #expect(workflow.steps[1].kind == .template("fields {{ receipt.value }} {{input}}"))
         #expect(workflow.referenceIssues.isEmpty)
-        let report = try await WorkflowRunner(catalog: .scripted(["model": model])).run(workflow, input: .text("input"))
+        let report = try await WorkflowExecutor(catalog: .scripted(["model": model])).run(workflow, input: .text("input"))
         #expect(report.output == .text("fields hello input"))
         let reserved = workflow.renameStep(from: "receipt", to: "input")
         let duplicate = workflow.renameStep(from: "receipt", to: "out")

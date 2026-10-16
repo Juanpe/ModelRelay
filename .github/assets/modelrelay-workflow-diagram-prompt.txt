@@ -1,0 +1,24 @@
+Generated using the built-in image generation tool.
+Brand reference: modelrelay-banner.png
+
+Initial generation prompt:
+Use case: infographic-diagram.
+Create a polished, highly legible landscape developer infographic for ModelRelay, an open-source Swift SDK. English text only. The attached reference is a BRAND REFERENCE: reproduce its blue-and-orange interwoven M logo and ModelRelay wordmark faithfully in a modest header; do not use its original banner composition.
+Visual direction: crisp flat vector-like editorial diagram on white/off-white, restrained indigo and orange accents matching the brand, charcoal typography, hairline gray connectors, generous whitespace, no 3D, no glass, no heavy gradients, no decorative tech clutter. Landscape approximately 16:9. Beautiful enough for a GitHub README or social post; large readable labels.
+
+Header: brand logo + "ModelRelay". Smaller title: "Compose AI workflows in Swift".
+Main story, large clear left-to-right arrow flow with five equally legible cards:
+1. "Input" / "Your app's data" (outside orchestration container)
+2. "Extract" / "Typed fields" (inside)
+3. "Agent" / "Reason with tools" (inside)
+4. "Custom Swift" / "Your async body" (inside)
+5. "Output" / "Back to your app" (outside).
+Enclose ONLY Extract, Agent, Custom Swift in a large very subtle outlined rounded rectangle labeled "ModelRelay workflow". All arrows must connect the cards in order without crossing text. The point is an SDK powering an app feature, not an app-builder interface. No phone mockup, no SwiftScript, no Runline.
+
+Below the Agent card, within the orchestration area, put two small connected tool badges "MCP tools" and "HTTP APIs". Use a compact bidirectional tool-call connector between Agent and these tool badges, visually subordinate to the main left-to-right data flow. Tools are invoked by the agent, never by the model provider band.
+Below the AI cards, show one simple supporting strip labeled "AnyLanguageModel" with small grouped labels "Apple models" / "Cloud providers" / "Local MLX". Thin subtle supporting connectors point only to Extract and Agent, NOT to Custom Swift or the tool badges. A small caption in this strip reads "Choose a model for each AI step". AnyLanguageModel is the single inference runtime; do not depict a bridge or two nested session runtimes. Keep all labels non-overlapping and visually separate from tool badges. Plenty of vertical spacing.
+Bottom compact line: "Typed values  ·  Branch & parallel  ·  One fallback  ·  Tool permissions  ·  Step traces".
+Minimal purpose-designed line icons per card, blue AI cards and orange Custom Swift accent. No other prose, code blocks, invented logos, citations or watermarks. Preserve correct spelling and exact casing. Favor a clear simple diagram over excessive detail.
+
+Final targeted edit prompt:
+Edit this infographic with ONE narrowly scoped correction. Preserve all existing typography, exact text, brand logo, colors, layout, card positions, tool badges, main five-card horizontal flow, borders and footer. Remove ONLY the two gray supporting connector paths between the bottom AnyLanguageModel strip and the workflow: remove the left bent line with upward arrow into Extract, and remove the central vertical upward arrow which currently goes from the AnyLanguageModel strip into the MCP tools badge. Leave that vertical gap completely empty clean white. The AnyLanguageModel strip should be a clearly labeled supporting legend with NO arrows connecting it to anything. Keep the separate SHORT connectors between the Agent card and its two tool badges, since tools belong to agent execution. Absolutely do not add new labels, arrows, cards, or connectors. No other visual changes. Same landscape dimensions, white opaque background.

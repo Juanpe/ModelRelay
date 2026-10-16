@@ -3,6 +3,13 @@ import Foundation
 import Synchronization
 @testable import ModelRelay
 
+func expectedOperationFailure(step: String, reason: String, category: WorkflowFailureCategory,
+                              uncertain: Bool = false) -> RelayError {
+    struct Expected: Error {}
+    return .operationFailed(step: step, failure: .init(
+        info: .init(category: category, message: reason, outcomeUncertain: uncertain), underlyingError: Expected()))
+}
+
 /// Native AnyLanguageModel test backend. Calls go through the real session;
 /// tool behavior is also verified against real providers using stubbed HTTP.
 final class ScriptedModel: LanguageModel {
@@ -14,6 +21,9 @@ final class ScriptedModel: LanguageModel {
     private let replies: Mutex<[String?]>
     private let calls = Mutex(0)
     private let seen = Mutex<[String]>([])
+    private let transcripts = Mutex<[Transcript]>([])
+    private let sessions = Mutex<[ObjectIdentifier]>([])
+    private let toolNames = Mutex<[[String]]>([])
     private let pictures = Mutex<[Transcript.ImageSegment]>([])
 
     init(_ name: String, replies: [String?], seesImages: Bool = true) {
@@ -22,6 +32,9 @@ final class ScriptedModel: LanguageModel {
         self.replies = Mutex(replies)
     }
 
+    var histories: [Transcript] { transcripts.withLock { $0 } }
+    var sessionIDs: [ObjectIdentifier] { sessions.withLock { $0 } }
+    var visibleTools: [[String]] { toolNames.withLock { $0 } }
     var callCount: Int { calls.withLock { $0 } }
     var prompts: [String] { seen.withLock { $0 } }
     var images: [Transcript.ImageSegment] { pictures.withLock { $0 } }
@@ -32,7 +45,12 @@ final class ScriptedModel: LanguageModel {
         var entries: [Transcript.Entry] = []
         while true {
             try Task.checkCancellation()
-            record(Transcript(entries: Array(session.transcript) + entries))
+            let request = session.resolvedRequestContext()
+            toolNames.withLock { $0.append(request.tools.map(\.name)) }
+            let transcript = Transcript(entries: Array(request.transcript) + entries)
+            transcripts.withLock { $0.append(transcript) }
+            sessions.withLock { $0.append(ObjectIdentifier(session)) }
+            record(transcript)
             guard let reply = next() else { throw Failure() }
             if reply == "<hang>" { try await Task.sleep(for: .seconds(60)) }
             if reply.hasPrefix("<tool:"), let close = reply.firstIndex(of: ">") {
@@ -40,7 +58,7 @@ final class ScriptedModel: LanguageModel {
                 let arguments = try GeneratedContent(json: String(reply[reply.index(after: close)...]))
                 let call = Transcript.ToolCall(id: UUID().uuidString, toolName: name, arguments: arguments)
                 entries.append(.toolCalls(.init([call])))
-                guard let tool = session.tools.first(where: { $0.name == name }) else { throw Failure() }
+                guard let tool = request.tools.first(where: { $0.name == name }) else { throw Failure() }
                 do {
                     let output = try await execute(tool, arguments: arguments)
                     entries.append(.toolOutput(.init(id: call.id, toolName: name, segments: [.text(.init(content: output))])))
@@ -54,7 +72,7 @@ final class ScriptedModel: LanguageModel {
                 raw = GeneratedContent(reply)
             } else {
                 // Existing scripted labels include deliberately invalid plain
-                // strings to exercise runner validation/fallback.
+                // strings to exercise executor validation/fallback.
                 raw = (try? GeneratedContent(json: reply)) ?? GeneratedContent(reply)
             }
             return try .init(content: Content(raw), rawContent: raw, transcriptEntries: ArraySlice(entries))

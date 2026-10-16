@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 import ModelRelay
 @testable import ModelRelayMCP
@@ -41,8 +42,8 @@ extension NetworkTests {
         let workflow = Workflow(name: "File", steps: [
             Step("file", .useTool(kit: "linear", tool: "create_issue", arguments: ["title": "{{input}}", "priority": "2"])),
         ])
-        let runner = WorkflowRunner(writePolicy: .allow, toolKits: [linear], toolServers: connector)
-        let report = try await runner.run(workflow, input: .text("Login broken"))
+        let executor = WorkflowExecutor(writePolicy: .allow, toolKits: [linear], toolServers: connector)
+        let report = try await executor.run(workflow, input: .text("Login broken"))
         #expect(report.output["id"] == .text("ISS-1"))
 
         let sent = StubProtocol.sent
@@ -65,8 +66,14 @@ extension NetworkTests {
         queueSession(tools: #"[{"name":"create_issue","inputSchema":{"type":"object","properties":{}}}]"#,
                      call: #"{"jsonrpc":"2.0","id":3,"result":{"isError":true,"content":[{"type":"text","text":"Team not found"}]}}"#)
         let workflow = Workflow(name: "File", steps: [Step("file", .useTool(kit: "linear", tool: "create_issue", arguments: [:]))])
-        await #expect(throws: RelayError.stepFailed(step: "file", reason: "Linear: Team not found")) {
-            try await WorkflowRunner(writePolicy: .allow, toolKits: [linear], toolServers: connector).run(workflow, input: .text(""))
+        do {
+            _ = try await WorkflowExecutor(writePolicy: .allow, toolKits: [linear], toolServers: connector).run(workflow, input: .text(""))
+            Issue.record("expected a tool failure")
+        } catch RelayError.operationFailed(let step, let failure) {
+            #expect(step == "file")
+            #expect(failure.info.message == "Team not found")
+            #expect(failure.info.outcomeUncertain)
+            #expect(failure.rootCause as? MCPError == .toolFailed("Team not found"))
         }
 
         StubProtocol.sent = []
@@ -77,6 +84,25 @@ extension NetworkTests {
             Issue.record("Expected a sign-in error")
         } catch MCPError.needsSignIn(let challenge) {
             #expect(challenge?.contains("resource_metadata") == true)
+        }
+    }
+
+    @Test func executorPreservesTypedMCPSignInAndEmitsOnlyTheCategory() async throws {
+        StubProtocol.sent = []
+        StubProtocol.queue = [(401, "")]
+        StubProtocol.headerQueue = [["WWW-Authenticate": "Bearer PRIVATE_CHALLENGE"]]
+        let workflow = Workflow("Authentication") { Step.useTool("lookup", kit: "linear", tool: "lookup") }
+        let events = Mutex<[WorkflowExecutionEvent]>([])
+        do {
+            _ = try await WorkflowExecutor(toolKits: [linear], toolServers: connector).run(workflow, input: .null,
+                onEvent: { event in events.withLock { $0.append(event) } })
+            Issue.record("expected sign in")
+        } catch RelayError.operationFailed(_, let failure) {
+            #expect(failure.info.category == .authenticationRequired)
+            guard case .needsSignIn(let challenge) = failure.rootCause as? MCPError else { Issue.record("lost MCP cause"); return }
+            #expect(challenge == "Bearer PRIVATE_CHALLENGE")
+            let json = String(decoding: try JSONEncoder().encode(events.withLock { $0 }), as: UTF8.self)
+            #expect(!json.contains("PRIVATE_CHALLENGE"))
         }
     }
 

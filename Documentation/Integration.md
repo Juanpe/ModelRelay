@@ -7,10 +7,13 @@ client application's identity or infrastructure is required.
 ## Ownership and entry points
 
 The host builds a `Workflow`, supplies a `Value`, and calls
-`WorkflowRunner.run(_:input:onStep:)`. The runner returns a `RunReport` or
-throws an error. Declarative workflows, steps and fields are `Codable` data; creating them
-never calls a model or tool. Developer-supplied `Step.custom` bodies run
-only during execution, and make their containing workflow in-memory only.
+`WorkflowExecutor.run` with optional policy, limits and observers. The executor returns a
+`WorkflowExecutionReport` or throws an error. Declarative workflows, steps
+and fields are `Codable` data; creating them never calls a model or tool.
+Developer-supplied `Step.custom` bodies run
+only during execution, and make their containing workflow definition
+non-serializable. Hosts can rebuild it in Swift and restore separate
+recoverable execution state.
 
 The core owns execution order, value substitution, branching, fallback and
 step records. The host chooses these integrations:
@@ -23,6 +26,7 @@ step records. The host chooses these integrations:
 | `WritePolicy` | Deny, allow or ask before operations that can change something | Host-supplied decision closure |
 | `ToolServerConnector` | Connect to remote tools | `ModelRelayMCP` |
 | `Step.custom` body | Execute trusted developer Swift code | Inline async throwing closure |
+| `WorkflowExecutionCheckpointStore` | Atomically persist trusted checkpoints with generation CAS | Host-owned durable storage |
 
 No SwiftUI, App Intents, browser, Keychain or persistence implementation is
 required by the core. Model-provider independence does not mean Linux or
@@ -36,25 +40,52 @@ These are three different lifetimes:
 1. **Workflow values** exist for one call to `run`. Steps share selected
    results through names and templates. By default, the next step reads the
    previous result. Separate runs do not share that state.
-2. **Conversations** exist inside a `LanguageModelSession`. Every model step
-   creates a fresh session today. A single agent step keeps its tool turns
-   in that session, but the next agent step does not inherit those turns.
-3. **Model resources** belong to the registered factory and its backend.
-   The runner calls the factory for each model attempt; the catalog does
-   not memoize it. A factory may return a shared model, or use a host-owned
-   resource manager that loads once. Whether weights/executors are reused
-   depends on the provider; a fresh session is not proof of a reload.
+2. **Conversations** use native AnyLanguageModel sessions. They are isolated
+   by default; `withContext(.conversation("name"))` reuses a session for that
+   name and model ID within one run. A different model/fallback has separate
+   history. `withContext(.handoff(["draft"]))` instead passes selected values
+   into a fresh session, never copying raw provider transcripts.
+3. **Model resources** are resolved once per ID and active invocation, with concurrent
+   factory loads coalesced. ModelRelay releases its references when the run
+   finishes. The provider still controls weight/KV-cache lifetime. Return a
+   shared backend if resource reuse across runs is appropriate. A resumed
+   invocation rebuilds its resource cache lazily, not its confirmed step values.
 
-Factories are `@Sendable` and may be called concurrently, for example by
-parallel steps or overlapping runs. Coordinate expensive initialization in
-your backend rather than storing a single mutable conversation globally.
-Returning the same model configuration is not a promise that its executor
-or weights are cached.
+Factories are `@Sendable`. Separate runs, including overlapping calls on one
+executor, own independent caches and conversations. Shared initialization
+across runs belongs to the host/provider. Cancelling one waiting step does
+not cancel an in-flight load while another step still needs it.
 
-There is no named persistent `Agent` API, automatic transcript handoff,
-context-window budgeting or MCP connection pool in the current runner.
-Reusing a tool kit or model ID shares configuration, not conversation memory.
-Do not rely on hidden state to move information between steps.
+Each conversation step rebinds tools to its own permission policy, call log
+and value snapshot using native dynamic instructions. Parallel branches may
+use different conversations, but sharing one name/model is rejected before
+any work runs. Recoverable `start`/`resume` executions can restore explicit
+histories within the same logical run. There is no global persistent agent
+memory, context-window budgeting or MCP connection pool.
+
+See [ContextAndPolicies](ContextAndPolicies.md) for execution restrictions,
+conservative privacy propagation and the host trust boundary.
+
+## Recovery and human approval
+
+Use `start`/`resume` with a host-provided `WorkflowExecutionCheckpointStore` to save execution
+state between top-level steps. A `requiringApproval` gate returns a checkpoint
+instead of suspending a task. A new executor can restore values, privacy labels,
+records and native conversation history; it recreates models/connections lazily.
+The host owns storage, encryption, account binding, scheduling and review UI.
+
+The store must use atomic durable compare-and-swap on `executionID` and `generation`;
+an unconditional overwrite does not satisfy the protocol. Every operation is
+claimed before work. A completed step is not replayed; a `running` checkpoint
+is ambiguous and cannot be resumed automatically. After independent external
+verification, `confirmCompletion` can record a leaf operation's result without
+invoking it. A block/agent cannot be reconstructed from just one result.
+
+Keep workflow IDs stable and change the host revision when custom code,
+model configuration, account binding or executable dependencies change. Approving
+a gate never bypasses current write/data policy. This does not guarantee
+exactly-once remote writes or extend OS execution time. See [Recovery](Recovery.md)
+for the API, sensitive-data contract, failure cases and supported boundaries.
 
 ### Explicit handoff between agents
 
@@ -80,18 +111,17 @@ let workflow = Workflow("Draft and review", output: "review") {
 
 Register `writer` and `reviewer` in the catalog. They may refer to the same
 model, or different providers. Adding `kits: ["research"]` makes that kit's
-tools available to an agent, provided the runner receives the kit and its
+tools available to an agent, provided the executor receives the kit and its
 required integrations. Results supplied in prompts remain data, not code
 or a new set of tool permissions.
 
 ## Validation, concurrency and failures
 
-Check `workflow.referenceIssues` before running generated or edited
-workflows, and keep all step names unique. The runner is not a complete
-schema validator. Missing template references currently render as empty
-text; an unresolved `Workflow.output` falls back to the last value. A
-step's explicit missing input reference throws instead. Do not use those
-fallbacks as validation.
+Use `await executor.validate(workflow)` for structured preflight diagnostics.
+`run`/`start`/`resume` reject statically invalid definitions automatically,
+including duplicate names, unavailable references/models and explicit output.
+Missing dynamic fields fail before substitution/request dispatch. Actual
+credentials, remote schemas and model readiness remain runtime checks.
 
 Parallel children read the same snapshot and cannot depend on each other.
 Their values are merged in declaration order, while `onStep` callbacks may
@@ -102,7 +132,7 @@ input and model output: apply the host's privacy and retention policy.
 
 There is at most one fallback model per step. An unknown model ID is a
 configuration error, not a reason to try the fallback. Requests and tool
-calls are never retried by the runner; an agent cannot switch to a fallback
+calls are never retried by the executor; an agent cannot switch to a fallback
 after any tool has run. A timeout does not prove that a remote write failed.
 Avoid replaying a whole workflow after an ambiguous network failure.
 
@@ -110,6 +140,13 @@ Avoid replaying a whole workflow after an ambiguous network failure.
 operations and relies on cooperative cancellation; model loading and
 backend behavior can add time. Host execution limits still apply. A
 background job, App Intent or HTTP endpoint must manage its own lifetime.
+
+`WorkflowExecutionLimits` adds a global cooperative duration, model/tool attempt
+budgets and a nested-parallel leaf concurrency cap. Counters/ceilings survive
+checkpoints. `onEvent` provides metadata-only lifecycle events, while operational
+failures retain their typed root cause instead of reducing it to a string.
+See [ExecutionSafety](ExecutionSafety.md) for counting, privacy, error and
+durable-reconciliation boundaries.
 
 ## MCP and OAuth
 
@@ -126,14 +163,14 @@ using `MCPSignIn` is optional:
 import ModelRelay
 import ModelRelayMCP
 
-func makeAuthenticatedRunner(
+func makeAuthenticatedExecutor(
     serverURL: String,
     tokenForKit: @escaping @Sendable (ToolKit) async throws -> String?,
     writePolicy: WritePolicy = .deny
-) -> WorkflowRunner {
+) -> WorkflowExecutor {
     let kit = ToolKit(id: "workspace", name: "Workspace", tools: [],
                       server: ToolServer(url: serverURL, signsIn: true))
-    return WorkflowRunner(
+    return WorkflowExecutor(
         writePolicy: writePolicy,
         toolKits: [kit],
         toolServers: MCPConnector(accessToken: tokenForKit, clientName: "MyClient")
@@ -169,10 +206,10 @@ workflow JSON, prompts, traces and diagnostic logs.
 
 The connector neither refreshes tokens nor opens a browser. Missing tokens
 and HTTP 401 produce `MCPError.needsSignIn` at the connector boundary. The
-runner currently wraps connector failures as `RelayError.stepFailed`; a
-host needing typed sign-in routing should authorize/preflight connections
-before starting a workflow. A sign-in flow must not automatically replay
-prior workflow writes.
+executor preserves them in `RelayError.operationFailed`: its category is
+`.authenticationRequired` and `failure.rootCause as? MCPError` retains the
+challenge. The host owns sign-in presentation. A sign-in flow must not
+automatically replay prior workflow writes.
 
 ### Compatibility limits
 

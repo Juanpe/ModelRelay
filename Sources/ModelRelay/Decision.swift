@@ -112,7 +112,7 @@ extension Answer {
 enum DecisionByLanguageModel {
     /// Asks a language model the questions with a guided schema: the same
     /// answers, without probabilities.
-    static func decide(_ questions: [Question], about input: String, model: any LanguageModel) async throws -> [Answer] {
+    static func decide(_ questions: [Question], about input: String, session: LanguageModelSession) async throws -> [Answer] {
         let properties = questions.map { question -> DynamicGenerationSchema.Property in
             let schema: DynamicGenerationSchema = switch question.kind {
             case .yesNo: DynamicGenerationSchema(type: Bool.self)
@@ -123,7 +123,7 @@ enum DecisionByLanguageModel {
         }
         let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "Answers", properties: properties), dependencies: [])
         let prompt = "Answer each question about the text below. Each field's description is its question.\n\nText:\n\(input)"
-        let content = try await LanguageModelSession(model: model).respond(to: prompt, schema: schema).content
+        let content = try await session.respond(to: prompt, schema: schema).content
         let value = Value(content)
         return try questions.map { question in
             guard let field = value[question.name] else {

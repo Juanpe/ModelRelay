@@ -99,12 +99,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     @Test func urlSessionPerformerSendsTheRequest() async throws {
         StubProtocol.reply = (200, #"{"temp": 21}"#)
-        let runner = WorkflowRunner(requests: URLSessionRequestPerformer(configuration: StubProtocol.configuration()),
+        let executor = WorkflowExecutor(requests: URLSessionRequestPerformer(configuration: StubProtocol.configuration()),
                                     writePolicy: .allow)
         let workflow = Workflow(name: "Post", steps: [
             Step("post", .request(HTTPRequest(.post, url: "https://api.test/items", body: #"{"name": "{{input}}"}"#))),
         ])
-        let report = try await runner.run(workflow, input: .text("Lisbon"))
+        let report = try await executor.run(workflow, input: .text("Lisbon"))
         #expect(report.output["temp"] == .number(21))
         let sent = try #require(StubProtocol.sent.first)
         #expect(sent.method == "POST")
@@ -115,8 +115,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     @Test func openAICompatibleExtractUsesAStrictSchema() async throws {
         StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "{\"merchant\": \"Blue Bottle\", \"total\": 8.3}"}}]}"#)
         let model = OpenAILanguageModel(baseURL: URL(string: "https://llm.test/v1")!, apiKey: "sk-test", model: "small", session: URLSession(configuration: StubProtocol.configuration()))
-        let runner = WorkflowRunner(catalog: ModelCatalog().registering("openai") { model })
-        let report = try await runner.run(receipt(model: "openai"), input: .text("BLUE BOTTLE 8.30"))
+        let executor = WorkflowExecutor(catalog: ModelCatalog().registering("openai") { model })
+        let report = try await executor.run(receipt(model: "openai"), input: .text("BLUE BOTTLE 8.30"))
         #expect(report.output["merchant"] == .text("Blue Bottle"))
         #expect(report.output["total"] == .number(8.3))
 
@@ -131,23 +131,23 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     @Test func classifyLabelsAreWrappedAndUnwrapped() async throws {
         StubProtocol.reply = (200, #"{"choices": [{"message": {"content": "{\"response\": \"urgent\"}"}}]}"#)
-        let runner = WorkflowRunner(catalog: ModelCatalog().registering("local", supportsImages: true) {
+        let executor = WorkflowExecutor(catalog: ModelCatalog().registering("local", supportsImages: true) {
             OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "llama3.2", session: URLSession(configuration: StubProtocol.configuration()))
         })
         let workflow = Workflow(name: "Triage", steps: [
             Step("label", .classify(instruction: "Urgent?", labels: ["urgent", "later"]), model: "local"),
         ])
-        let report = try await runner.run(workflow, input: .text("Server down"))
+        let report = try await executor.run(workflow, input: .text("Server down"))
         #expect(report.output == .text("urgent"))
         #expect(StubProtocol.sent.count == 1)
     }
 
     @Test func claudeExtractUsesNativeStructuredOutput() async throws {
         StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "{\"merchant\":\"Blue Bottle\",\"total\":8.3}"}]}"#)
-        let runner = WorkflowRunner(catalog: ModelCatalog().registering("claude", supportsImages: true) {
+        let executor = WorkflowExecutor(catalog: ModelCatalog().registering("claude", supportsImages: true) {
             AnthropicLanguageModel(apiKey: "sk-ant-test", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration()))
         })
-        let report = try await runner.run(receipt(model: "claude"), input: .text("BLUE BOTTLE 8.30"))
+        let report = try await executor.run(receipt(model: "claude"), input: .text("BLUE BOTTLE 8.30"))
         #expect(report.output["total"] == .number(8.3))
 
         let sent = try #require(StubProtocol.sent.first)
@@ -160,16 +160,34 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "Hello there."}]}"#)
         let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "sk-ant-test", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
         let ask = Workflow(name: "Ask", steps: [Step("hi", .prompt(instruction: "Say hello."), model: "claude")])
-        #expect(try await WorkflowRunner(catalog: catalog).run(ask, input: .text("")).output == .text("Hello there."))
+        #expect(try await WorkflowExecutor(catalog: catalog).run(ask, input: .text("")).output == .text("Hello there."))
 
         StubProtocol.reply = (401, #"{"error": {"message": "invalid x-api-key"}}"#)
         do {
-            _ = try await WorkflowRunner(catalog: catalog).run(ask, input: .text(""))
+            _ = try await WorkflowExecutor(catalog: catalog).run(ask, input: .text(""))
             Issue.record("Expected a failure")
-        } catch let RelayError.stepFailed(step, reason) {
+        } catch let RelayError.operationFailed(step, failure) {
             #expect(step == "hi")
+            let reason = failure.info.message
             #expect(reason.contains("401"))
             #expect(!reason.contains("sk-ant-test"))
+        }
+    }
+
+    @Test func decisionProviderAuthenticationIsTypedAndDoesNotEchoTheKey() async throws {
+        StubProtocol.reply = (401, #"{"error":{"message":"Rejected jev-private-key"}}"#)
+        let model = DecisionsAPIModel(apiKey: "jev-private-key", baseURL: URL(string: "https://decisions.test/v1")!)
+        let workflow = Workflow("Decision auth") {
+            Step.decide("decision", questions: [Question("yes", "Yes?", .yesNo)], model: "decision")
+        }
+        do {
+            _ = try await WorkflowExecutor(catalog: ModelCatalog().registering(decisions: "decision") { model })
+                .run(workflow, input: .null)
+            Issue.record("expected authentication failure")
+        } catch RelayError.operationFailed(_, let failure) {
+            #expect(failure.info.category == .authenticationRequired)
+            #expect((failure.rootCause as? CloudModelError)?.status == 401)
+            #expect(!failure.info.message.contains("jev-private-key"))
         }
     }
 
@@ -224,7 +242,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let catalog = ModelCatalog().registering("ollama") {
             OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "qwen2.5", session: URLSession(configuration: StubProtocol.configuration()))
         }
-        let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
+        let report = try await WorkflowExecutor(catalog: catalog, requests: WeatherAPI())
             .run(weatherAgent("ollama"), input: .text("Weather in Lisbon?"))
         #expect(report.output == .text("19 degrees in Lisbon."))
         #expect(report.records.first?.toolCalls == ["getWeather"])
@@ -246,7 +264,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             (200, #"{"content": [{"type": "text", "text": "It's 19 degrees."}]}"#),
         ]
         let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "k", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
-        let report = try await WorkflowRunner(catalog: catalog, requests: WeatherAPI())
+        let report = try await WorkflowExecutor(catalog: catalog, requests: WeatherAPI())
             .run(weatherAgent("claude"), input: .text("Weather in Lisbon?"))
         #expect(report.output == .text("It's 19 degrees."))
 
@@ -284,7 +302,7 @@ extension NetworkTests {
     @Test func claudeReadsImagesAsImageBlocks() async throws {
         StubProtocol.reply = (200, #"{"content": [{"type": "text", "text": "TOTAL 8.30"}]}"#)
         let catalog = ModelCatalog().registering("claude", supportsImages: true) { AnthropicLanguageModel(apiKey: "k", model: "claude-haiku-5-5", session: URLSession(configuration: StubProtocol.configuration())) }
-        let report = try await WorkflowRunner(catalog: catalog).run(reader("claude"), input: .image(photo()))
+        let report = try await WorkflowExecutor(catalog: catalog).run(reader("claude"), input: .image(photo()))
         #expect(report.output == .text("TOTAL 8.30"))
 
         let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
@@ -303,7 +321,7 @@ extension NetworkTests {
         let catalog = ModelCatalog().registering("local", supportsImages: true) {
             OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "qwen2.5vl", session: URLSession(configuration: StubProtocol.configuration()))
         }
-        let report = try await WorkflowRunner(catalog: catalog).run(reader("local"), input: .image(photo()))
+        let report = try await WorkflowExecutor(catalog: catalog).run(reader("local"), input: .image(photo()))
         #expect(report.output == .text("TOTAL 8.30"))
 
         let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
@@ -319,7 +337,7 @@ extension NetworkTests {
             OpenAILanguageModel(baseURL: URL(string: "http://localhost:11434/v1")!, apiKey: "", model: "llama3.2", session: URLSession(configuration: StubProtocol.configuration()))
         }
         let ask = Workflow(name: "Ask", steps: [Step("hi", .prompt(instruction: "Say hi."), model: "local")])
-        _ = try await WorkflowRunner(catalog: catalog).run(ask, input: .text(""))
+        _ = try await WorkflowExecutor(catalog: catalog).run(ask, input: .text(""))
         let messages = try #require(StubProtocol.sent.first?.json["messages"] as? [[String: Any]])
         let blocks = try #require(messages.last?["content"] as? [[String: Any]])
         #expect(blocks.count == 1)

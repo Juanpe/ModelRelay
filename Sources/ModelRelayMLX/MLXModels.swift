@@ -26,7 +26,7 @@ extension ModelCatalog {
     public mutating func registerMLXModels() {
         for (id, modelID) in MLXModels.configurations {
             let model = MLXLanguageModel(modelId: modelID)
-            register(id) { model }
+            register(id, location: .local) { model }
         }
     }
 

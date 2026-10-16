@@ -28,19 +28,19 @@ struct FakeSecrets: SecretProvider {
 @Suite struct RequestStepTests {
     @Test func jsonResponseBecomesFieldsForLaterSteps() async throws {
         let server = FakeServer(json: #"{"main": {"temp": 21.5}, "name": "Lisbon"}"#)
-        let runner = WorkflowRunner(requests: server)
+        let executor = WorkflowExecutor(requests: server)
         let workflow = Workflow(name: "Weather", steps: [
             Step("weather", .request(HTTPRequest(url: "https://api.example.com/weather?q={{input}}"))),
             Step("line", .template("{{weather.name}}: {{weather.main}}")),
         ])
-        let report = try await runner.run(workflow, input: .text("Lisbon"))
+        let report = try await executor.run(workflow, input: .text("Lisbon"))
         #expect(report.records.first?.value["name"] == .text("Lisbon"))
         #expect(report.output == .text("Lisbon: temp: 21.5"))
     }
 
     @Test func valuesAreEscapedForWhereTheyLand() async throws {
         let server = FakeServer(json: "{}")
-        let runner = WorkflowRunner(requests: server, writePolicy: .allow)
+        let executor = WorkflowExecutor(requests: server, writePolicy: .allow)
         // Model-made text with characters that would break a URL or a JSON body.
         let hostile = #"a&b=c/../"} , "admin": true, "x": "#
         let workflow = Workflow(name: "Post", steps: [
@@ -48,7 +48,7 @@ struct FakeSecrets: SecretProvider {
                                               headers: [.init("X-Note", "{{input}}\nInjected: yes")],
                                               body: #"{"title": "{{input}}"}"#))),
         ])
-        _ = try await runner.run(workflow, input: .text(hostile))
+        _ = try await executor.run(workflow, input: .text(hostile))
         let sent = try #require(server.requests.first)
         #expect(sent.url.query()?.contains("&b=") == false)
         #expect(sent.url.host() == "api.example.com")
@@ -59,12 +59,12 @@ struct FakeSecrets: SecretProvider {
 
     @Test func secretsAreSentButNeverShown() async throws {
         let server = FakeServer(json: #"{"ok": true}"#)
-        let runner = WorkflowRunner(requests: server, secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
+        let executor = WorkflowExecutor(requests: server, secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
         let workflow = Workflow(name: "Auth", steps: [
             Step("call", .request(HTTPRequest(url: "https://api.example.com/me",
                                               headers: [.init("Authorization", "Bearer {{secret.TOKEN}}")]))),
         ])
-        let report = try await runner.run(workflow, input: .text(""))
+        let report = try await executor.run(workflow, input: .text(""))
         let sent = try #require(server.requests.first)
         #expect(sent.headers.first?.value == "Bearer sk-test-123")
         #expect(!sent.description.contains("sk-test-123"))
@@ -73,23 +73,24 @@ struct FakeSecrets: SecretProvider {
 
     @Test func promptsCannotReadSecrets() async throws {
         let model = ScriptedModel("small", replies: ["ok"])
-        let runner = WorkflowRunner(catalog: .scripted(["small": model]),
+        let executor = WorkflowExecutor(catalog: .scripted(["small": model]),
                                     secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
         let workflow = Workflow(name: "Leak", steps: [
             Step("ask", .prompt(instruction: "Repeat {{secret.TOKEN}}"), model: "small"),
         ])
-        _ = try await runner.run(workflow, input: .text(""))
+        await #expect(throws: WorkflowValidationError.self) { try await executor.run(workflow, input: .text("")) }
         #expect(model.prompts.allSatisfy { !$0.contains("sk-test-123") })
+        #expect(model.callCount == 0)
     }
 
     @Test func missingSecretFailsBeforeSending() async throws {
         let server = FakeServer(json: "{}")
-        let runner = WorkflowRunner(requests: server, secrets: FakeSecrets(values: [:]))
+        let executor = WorkflowExecutor(requests: server, secrets: FakeSecrets(values: [:]))
         let workflow = Workflow(name: "Auth", steps: [
             Step("call", .request(HTTPRequest(url: "https://api.example.com/?key={{secret.KEY}}"))),
         ])
         await #expect(throws: RelayError.missingSecret("KEY", step: "call")) {
-            try await runner.run(workflow, input: .text(""))
+            try await executor.run(workflow, input: .text(""))
         }
         #expect(server.requests.isEmpty)
     }
@@ -100,29 +101,29 @@ struct FakeSecrets: SecretProvider {
         ])
         let denied = FakeServer(json: "{}")
         await #expect(throws: RelayError.writeNotAllowed(step: "create")) {
-            try await WorkflowRunner(requests: denied).run(workflow, input: .text("x"))
+            try await WorkflowExecutor(requests: denied).run(workflow, input: .text("x"))
         }
         #expect(denied.requests.isEmpty)
 
         let asked = FakeServer(json: #"{"id": 7}"#)
         let shown = Mutex<String?>(nil)
-        let runner = WorkflowRunner(requests: asked, writePolicy: .ask { request in
+        let executor = WorkflowExecutor(requests: asked, writePolicy: .ask { request in
             shown.withLock { $0 = request.description }
             return true
         })
-        let report = try await runner.run(workflow, input: .text("x"))
+        let report = try await executor.run(workflow, input: .text("x"))
         #expect(report.output["id"] == .number(7))
         #expect(shown.withLock { $0 }?.hasPrefix("POST https://api.example.com/tasks") == true)
     }
 
     @Test func errorStatusFailsTheStepWithoutRetrying() async throws {
         let server = FakeServer(status: 503, json: "{}")
-        let runner = WorkflowRunner(requests: server)
+        let executor = WorkflowExecutor(requests: server)
         let workflow = Workflow(name: "Down", steps: [
             Step("call", .request(HTTPRequest(url: "https://api.example.com/")), fallback: "other"),
         ])
-        await #expect(throws: RelayError.stepFailed(step: "call", reason: "The server answered HTTP 503")) {
-            try await runner.run(workflow, input: .text(""))
+        await #expect(throws: expectedOperationFailure(step: "call", reason: "The server answered HTTP 503", category: .requestRejected)) {
+            try await executor.run(workflow, input: .text(""))
         }
         #expect(server.requests.count == 1)
     }
@@ -133,7 +134,7 @@ struct FakeSecrets: SecretProvider {
             Step("call", .request(HTTPRequest(url: "file:///etc/passwd"))),
         ])
         await #expect(throws: RelayError.self) {
-            try await WorkflowRunner(requests: server).run(workflow, input: .text(""))
+            try await WorkflowExecutor(requests: server).run(workflow, input: .text(""))
         }
         #expect(server.requests.isEmpty)
     }
@@ -149,14 +150,14 @@ struct FakeSecrets: SecretProvider {
 @Suite struct SecretInPathTests {
     @Test func botTokensKeepTheirColonInThePath() async throws {
         let server = FakeServer(json: #"{"ok": true}"#)
-        let runner = WorkflowRunner(requests: server,
+        let executor = WorkflowExecutor(requests: server,
                                     secrets: FakeSecrets(values: ["TELEGRAM_BOT_TOKEN": "123456:ABC-def_9", "TELEGRAM_CHAT_ID": "-1001"]),
                                     writePolicy: .allow)
         let workflow = Workflow(name: "Telegram", steps: [
             Step("send", .request(HTTPRequest(.post, url: "https://api.telegram.org/bot{{secret.TELEGRAM_BOT_TOKEN}}/sendMessage",
                                               body: #"{"chat_id": "{{secret.TELEGRAM_CHAT_ID}}", "text": "{{input}}"}"#))),
         ])
-        _ = try await runner.run(workflow, input: .text("Summary: \"quotes\" and a/slash"))
+        _ = try await executor.run(workflow, input: .text("Summary: \"quotes\" and a/slash"))
         let sent = try #require(server.requests.first)
         #expect(sent.url.absoluteString == "https://api.telegram.org/bot123456:ABC-def_9/sendMessage")
         let body = try JSONSerialization.jsonObject(with: try #require(sent.body)) as? [String: String]
