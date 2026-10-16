@@ -26,8 +26,10 @@ Let's build something 🙂
 
 <p align="center">
   <a href="#features">🌟 Features</a> ·
+  <a href="#why-modelrelay">🤔 Why ModelRelay?</a> ·
   <a href="#installation">📲 Installation</a> ·
   <a href="#usage">🐒 Usage</a> ·
+  <a href="#models">🧠 Models</a> ·
   <a href="#use-cases">💡 Use cases</a> ·
   <a href="#advanced">🛠 Advanced</a> ·
   <a href="#guides">📚 Guides</a> ·
@@ -48,6 +50,39 @@ Let's build something 🙂
 - ⏸ **Review and resume:** checkpoint contracts, approval gates, step records and metadata-only events.
 
 ![An app passes data through extraction, a tool-enabled agent and custom Swift, then receives typed output. AnyLanguageModel powers the model steps.](.github/assets/modelrelay-workflow-diagram.png)
+
+<a name="why-modelrelay"></a>
+
+## 🤔 Why not just use Apple's APIs?
+
+You can! Foundation Models already provides [stateful sessions and streaming](https://developer.apple.com/documentation/foundationmodels/languagemodelsession),
+[structured generation](https://developer.apple.com/documentation/foundationmodels/generating-swift-data-structures-with-guided-generation)
+and [tool calling](https://developer.apple.com/documentation/foundationmodels/expanding-generation-with-tool-calling).
+For a prompt, an extraction or a conversation with Apple's model, using it
+directly is often the simplest choice.
+
+ModelRelay is for the process around those calls:
+
+| You need… | With Apple APIs directly | ModelRelay adds |
+| --- | --- | --- |
+| 🧩 Multiple steps | Connect calls with Swift concurrency and your own state | Named results, branches and parallel blocks in one `Workflow` |
+| 🧠 Different models | Integrate providers and choose when to call each | Per-step catalog IDs and one explicit fallback, using AnyLanguageModel providers |
+| 🤝 Shared context | Keep sessions and pass selected results yourself | Named conversations and explicit handoffs between agents |
+| 🧰 External tools | Implement `Tool` types and service integrations | Reusable kits, HTTP/MCP integrations and write approval |
+| 🔒 Execution rules | Add application-level checks and counters | Preflight validation, privacy labels and workflow-wide attempt/concurrency limits |
+| ⏸ Review and recovery | Persist transcripts plus your own job state | Approval gates and `start` / `resume` checkpoints with a host-owned store |
+| 📡 Progress | Stream generated content and inspect session history | Workflow events, step records and a final execution report |
+
+Apple also supports [custom model providers](https://developer.apple.com/documentation/foundationmodels/languagemodel)
+on OS 27+. ModelRelay's value is reusable **workflow orchestration**, not
+exclusive access to tools, structured output or other models.
+
+You could build this coordination yourself. ModelRelay packages it without
+replacing the native inference runtime. It does not make Apple's model
+faster or remove its hardware, availability or entitlement requirements.
+Workflow events are not token streaming, and recovery still needs your
+durable storage. [Execution boundaries →](Documentation/ExecutionSafety.md) ·
+[Recovery contract →](Documentation/Recovery.md)
 
 <a name="installation"></a>
 
@@ -165,6 +200,8 @@ That's it! Your app receives a `Value`, not a string it has to parse by hand.
 > your device. Other models and fallbacks need to be registered in a
 > `ModelCatalog` first.
 
+See [models and setup](#models) for Jev, Ollama and other providers.
+
 **Want to try it without a model or API key?** The
 [standalone example](Examples/StandaloneClient) runs a deterministic workflow:
 
@@ -185,6 +222,29 @@ swift run --package-path Examples/StandaloneClient StandaloneClient
 By default, each step reads the previous result. Select an earlier result
 with `input: "expense"`, or insert one into text with `{{expense.total}}`.
 See the [usage recipes](Documentation/Usage.md) for all step types and data-flow rules.
+
+<a name="models"></a>
+
+## 🧠 Pick your models
+
+Use Jev to make a decision, Ollama to summarize, and another model to draft
+the reply. Each step chooses a registered model ID; the workflow stays the same.
+
+| Want to use… | Register… | Example |
+| --- | --- | --- |
+| 🗳 **Jev** | `DecisionsAPIModel` from `ModelRelayCloud` | [Route and score a ticket](Documentation/Models.md#jev) |
+| 🦙 **Ollama** | Native `OllamaLanguageModel` | [Summarize with Qwen](Documentation/Models.md#ollama) |
+| ☁️ **OpenAI / Anthropic** | Native `OpenResponsesLanguageModel` / `AnthropicLanguageModel` | [Cloud providers](Documentation/Models.md#cloud) |
+| 🔌 **OpenAI-compatible servers** | Native `OpenAILanguageModel` with your base URL | [Bring an endpoint](Documentation/Models.md#compatible-servers) |
+| 🍎 **Apple models / OCR** | Built in: `.appleOnDevice`, `.applePrivateCloud`, `.appleTextRecognition` | [Use Apple's models](Documentation/Models.md#apple) |
+| ⚡️ **On-device MLX** | `ModelRelayMLX` presets with the `MLX` trait | [Run Qwen in-process](Documentation/Models.md#mlx) |
+
+Jev answers typed questions; it is not a text generator. Ollama serves a
+model over HTTP; MLX runs it inside your process. Native providers come from
+AnyLanguageModel, without another ModelRelay adapter.
+
+[Setup and examples →](Documentation/Models.md) ·
+[Mix Jev and Ollama in one workflow →](Documentation/Models.md#mix-models)
 
 <a name="use-cases"></a>
 
@@ -323,7 +383,8 @@ use `start` / `resume` with a host-owned checkpoint store.
 
 | Looking for… | Read this |
 | --- | --- |
-| Step types, branching, HTTP tools, cloud models, images, MCP or Jev | [Usage recipes](Documentation/Usage.md) |
+| Jev, Ollama, Apple, cloud providers, MLX and mixed-model workflows | [Models and providers](Documentation/Models.md) |
+| Step types, branching, HTTP tools, images, MCP and typed questions | [Usage recipes](Documentation/Usage.md) |
 | Entry points, responsibilities and MCP/OAuth integration | [Integrating ModelRelay](Documentation/Integration.md) |
 | Shared conversations, handoffs, resource reuse and privacy | [Context and policies](Documentation/ContextAndPolicies.md) |
 | Validation, typed errors, events and budget accounting | [Execution safety](Documentation/ExecutionSafety.md) |

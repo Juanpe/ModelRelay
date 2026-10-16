@@ -149,34 +149,13 @@ with `kits: ["weather"]`.
 
 <a name="cloud-models"></a>
 
-## ☁️ Choose a cloud model
+## ☁️ Choose your models
 
-Register native AnyLanguageModel providers directly:
-
-```swift
-import AnyLanguageModel
-import Foundation
-import ModelRelay
-
-func makeCloudExecutor(baseURL: URL, modelName: String, apiKey: String) -> WorkflowExecutor {
-    let model = OpenAILanguageModel(baseURL: baseURL, apiKey: apiKey, model: modelName)
-    let catalog = ModelCatalog().registering("writer", location: .remote) { model }
-    return WorkflowExecutor(catalog: catalog)
-}
-
-let workflow = Workflow(
-    name: "Cloud summary"
-) {
-    Step.prompt("summary", "Summarize in three bullet points.", model: "writer")
-}
-```
-
-For Anthropic, use `AnthropicLanguageModel(apiKey: apiKey, model: modelName)`.
-Choose a supported model and pass credentials at runtime.
-
-Declare AnyLanguageModel and its product in clients that import it.
-It resolves the same 1.0.0 dependency, not a second copy.
-[Resource lifetime →](ContextAndPolicies.md#resource-lifetime)
+Register native providers in a `ModelCatalog`, then use their IDs in steps.
+The [models guide](Models.md) covers [Ollama](Models.md#ollama),
+[OpenAI and Anthropic](Models.md#cloud), [compatible servers](Models.md#compatible-servers),
+[Apple](Models.md#apple), [MLX](Models.md#mlx) and [Jev](Models.md#jev),
+including package setup and a mixed-model workflow.
 
 <a name="images"></a>
 
@@ -291,14 +270,6 @@ Need yes/no, choices or scores rather than a generated paragraph?
 
 ```swift
 import ModelRelay
-import ModelRelayCloud
-
-func makeDecisionExecutor(apiKey: String) -> WorkflowExecutor {
-    let catalog = ModelCatalog().registering(decisions: "jev", location: .remote) {
-        DecisionsAPIModel(apiKey: apiKey)
-    }
-    return WorkflowExecutor(catalog: catalog)
-}
 
 let workflow = Workflow(
     name: "Triage ticket"
@@ -311,10 +282,9 @@ let workflow = Workflow(
 }
 ```
 
-`DecisionsAPIModel` supports specialized decisions such as TypeSafe's Jev
-through Vercel AI Gateway, with confidence information. A language model can
-answer the same questions through guided generation, including as an
-available on-device fallback.
+Register `"jev"` using the [Jev setup example](Models.md#jev).
+A language model can answer the same questions through guided generation,
+including as an available on-device fallback, without Jev's probabilities.
 
 Decision models do not generate summaries or act as general-purpose agents.
 
