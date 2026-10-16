@@ -24,11 +24,19 @@ public enum WorkflowBuilder {
 }
 
 extension Workflow {
-    /// Builds the same serializable workflow as `init(id:name:steps:output:)`.
-    /// The builder executes immediately and never runs models or tools.
+    /// Builds the step tree immediately, without running models or tools.
+    public init(
+        name: String,
+        id: UUID = UUID(),
+        output: String? = nil,
+        @WorkflowBuilder steps: () -> [Step]
+    ) {
+        self.init(id: id, name: name, steps: steps(), output: output)
+    }
+
     public init(_ name: String, id: UUID = UUID(), output: String? = nil,
                 @WorkflowBuilder steps: () -> [Step]) {
-        self.init(id: id, name: name, steps: steps(), output: output)
+        self.init(name: name, id: id, output: output, steps: steps)
     }
 }
 

@@ -5,7 +5,11 @@ import ModelRelay
 @Suite struct WorkflowBuilderTests {
     @Test func builderPreservesTheExistingTreeAndJSON() throws {
         let id = UUID()
-        let built = Workflow("Article", id: id, output: "result") {
+        let built = Workflow(
+            name: "Article",
+            id: id,
+            output: "result"
+        ) {
             Step.prompt("summary", "Summarize.", model: "writer", fallback: .appleOnDevice)
             Step.parallel("analysis", input: "input") {
                 Step.classify("tone", "Tone?", labels: ["positive", "negative"], model: "small")
@@ -28,6 +32,29 @@ import ModelRelay
         encoder.outputFormatting = [.sortedKeys]
         #expect(try encoder.encode(built) == encoder.encode(original))
         #expect(try JSONDecoder().decode(Workflow.self, from: encoder.encode(built)) == original)
+    }
+
+    @Test func namedAndUnlabeledInitializersMatchAndEvaluateBuildersOnce() {
+        let id = UUID()
+        var evaluations = 0
+        func result() -> Step {
+            evaluations += 1
+            return .template("result", "{{input}}")
+        }
+        let named = Workflow(
+            name: "Analyze article",
+            id: id,
+            output: "result"
+        ) {
+            result()
+        }
+        #expect(evaluations == 1)
+        let unlabeled = Workflow("Analyze article", id: id, output: "result") {
+            result()
+        }
+        #expect(evaluations == 2)
+        #expect(named == unlabeled)
+        #expect(Workflow(name: "Empty") {}.steps.isEmpty)
     }
 
     @Test func constructionSupportsArraysConditionsLoopsAndSwitches() {
@@ -184,7 +211,10 @@ import ModelRelay
     }
 
     @Test func builtSwitchRunsAtExecutionTimeAndOutputSelectionStillWorks() async throws {
-        let workflow = Workflow("Runtime switch", output: "route") {
+        let workflow = Workflow(
+            name: "Runtime switch",
+            output: "route"
+        ) {
             Step.switchOn("route", reference: "input", cases: [
                 SwitchCase("yes") { Step.template("accepted", "Accepted") },
             ]) {

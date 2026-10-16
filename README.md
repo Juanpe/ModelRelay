@@ -1,4 +1,4 @@
-![ModelRelay — Composable AI workflows for Swift](.github/assets/modelrelay-banner.png)
+![ModelRelay: Composable AI workflows for Swift](.github/assets/modelrelay-banner.png)
 
 <p align="center">
   <a href="#installation"><img src="https://img.shields.io/badge/Swift-6.4-F05138?logo=swift&logoColor=white" alt="Swift 6.4"></a>
@@ -38,14 +38,14 @@ Let's build something 🙂
 
 ## 🌟 Features
 
-- 🧩 **Compose in Swift** — small steps, result builders, branches and parallel work.
-- 🧠 **Choose models per step** — Apple models, cloud providers, OpenAI-compatible servers and opt-in local MLX.
-- 🤝 **Connect agents** — share a native conversation or hand selected results to another model.
-- 🧰 **Bring your tools** — HTTP APIs, MCP tools and reusable tool kits.
-- 🎯 **Ask typed questions** — extract fields, classify text or use decision models such as Jev.
-- 👨‍💻 **Add your own logic** — async Swift bodies, without a script runner.
-- 🔒 **Set boundaries** — write approval, local-only data policies and execution budgets.
-- ⏸ **Review and resume** — checkpoint contracts, approval gates, step records and metadata-only events.
+- 🧩 **Compose in Swift:** small steps, result builders, branches and parallel work.
+- 🧠 **Choose models per step:** Apple models, cloud providers, OpenAI-compatible servers and opt-in local MLX.
+- 🤝 **Connect agents:** share a native conversation or hand selected results to another model.
+- 🧰 **Bring your tools:** HTTP APIs, MCP tools and reusable tool kits.
+- 🎯 **Ask typed questions:** extract fields, classify text or use decision models such as Jev.
+- 👨‍💻 **Add your own logic:** async Swift bodies, without a script runner.
+- 🔒 **Set boundaries:** write approval, local-only data policies and execution budgets.
+- ⏸ **Review and resume:** checkpoint contracts, approval gates, step records and metadata-only events.
 
 ![An app passes data through extraction, a tool-enabled agent and custom Swift, then receives typed output. AnyLanguageModel powers the model steps.](.github/assets/modelrelay-workflow-diagram.png)
 
@@ -124,7 +124,9 @@ import ModelRelay
 Let's turn a receipt into typed fields:
 
 ```swift
-let workflow = Workflow("Receipt to expense") {
+let workflow = Workflow(
+    name: "Receipt to expense"
+) {
     Step.extract("expense", instruction: "Extract the expense from this receipt.", model: .appleOnDevice) {
         Field("merchant", .text)
         Field("total", .number)
@@ -132,6 +134,9 @@ let workflow = Workflow("Receipt to expense") {
     }
 }
 ```
+
+`name` is the workflow's display name. Step names identify results that
+later steps can reference.
 
 ### 3️⃣ Run it
 
@@ -196,7 +201,10 @@ capture, review, credentials and storage.
 Summarize an article and classify its tone, then combine both results:
 
 ```swift
-let workflow = Workflow("Analyze article", output: "result") {
+let workflow = Workflow(
+    name: "Analyze article",
+    output: "result"
+) {
     Step.parallel("analysis") {
         Step.prompt("summary", "Summarize in three bullet points.", model: .appleOnDevice)
         Step.classify("tone", "Identify the tone.",
@@ -205,6 +213,8 @@ let workflow = Workflow("Analyze article", output: "result") {
     Step.template("result", "{{summary}} · Tone: {{analysis.tone}}")
 }
 ```
+
+`output: "result"` returns the value of the step named `result`.
 
 Parallel children read the same incoming data, not each other's results.
 Use `ifEquals` or `switchOn` when the result should choose a path.
@@ -216,7 +226,9 @@ Give two steps the same conversation name and model to reuse their native
 session within one execution:
 
 ```swift
-let workflow = Workflow("Draft and review") {
+let workflow = Workflow(
+    name: "Draft and review"
+) {
     Step.agent("draft", "Write a short answer.", model: .appleOnDevice)
         .withContext(.conversation("writer"))
     Step.agent("review", "Review your previous answer.", input: "input", model: .appleOnDevice)
@@ -236,7 +248,9 @@ No model needed for trimming text, validating totals or applying your app's rule
 ```swift
 import Foundation
 
-let workflow = Workflow("Normalize text") {
+let workflow = Workflow(
+    name: "Normalize text"
+) {
     Step.custom("normalized") { context in
         .text(context.input.textValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }

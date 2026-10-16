@@ -47,7 +47,9 @@ To branch on a model's result during **execution**, use an explicit step:
 ```swift
 import ModelRelay
 
-let workflow = Workflow("Route message") {
+let workflow = Workflow(
+    name: "Route message"
+) {
     Step.classify("kind", "Is this urgent?", labels: ["urgent", "later"], model: .appleOnDevice)
     Step.ifEquals("route", reference: "kind", value: "urgent") {
         Step.template("urgent", "Needs attention: {{input}}")
@@ -85,7 +87,7 @@ each other's results. Their block returns a dictionary keyed by child name.
 > If an instruction contains template markers, the rendered text is the
 > **entire prompt**. Include `{{input}}` yourself if the model needs it.
 
-`Workflow("Name", output: "result")` returns that named step's whole value;
+`Workflow(name: "Name", output: "result")` returns that named step's whole value;
 without `output`, execution returns the last result. Invalid explicit
 outputs and missing references fail rather than silently returning another
 value or substituting empty text.
@@ -107,7 +109,9 @@ Add the `ModelRelayHTTP` product and supply a request performer:
 import ModelRelay
 import ModelRelayHTTP
 
-let workflow = Workflow("Weather") {
+let workflow = Workflow(
+    name: "Weather"
+) {
     Step.request("weather", HTTPRequest(url: "https://api.example.com/weather?q={{input}}"))
 }
 let executor = WorkflowExecutor(requests: URLSessionRequestPerformer())
@@ -149,7 +153,9 @@ let weather = AgentTool(
     parameters: [Field("city", .text)],
     request: HTTPRequest(url: "https://api.example.com/weather?q={{args.city}}")
 )
-let workflow = Workflow("Weather assistant") {
+let workflow = Workflow(
+    name: "Weather assistant"
+) {
     Step.agent("answer", "Answer the question.", tools: [weather], model: .appleOnDevice)
 }
 ```
@@ -178,7 +184,9 @@ func makeCloudExecutor(baseURL: URL, modelName: String, apiKey: String) -> Workf
     return WorkflowExecutor(catalog: catalog)
 }
 
-let workflow = Workflow("Cloud summary") {
+let workflow = Workflow(
+    name: "Cloud summary"
+) {
     Step.prompt("summary", "Summarize in three bullet points.", model: "writer")
 }
 ```
@@ -205,7 +213,9 @@ import Foundation
 import ModelRelay
 
 func readReceipt(_ jpeg: Data, using executor: WorkflowExecutor) async throws -> WorkflowExecutionReport {
-    let workflow = Workflow("Read receipt") {
+    let workflow = Workflow(
+        name: "Read receipt"
+    ) {
         Step.readImage("receipt", instruction: "Read the total.",
                        model: "claude", fallback: .appleTextRecognition)
     }
@@ -233,7 +243,9 @@ Use a compiled body for logic that does not need a model:
 import Foundation
 import ModelRelay
 
-let workflow = Workflow("Normalize and summarize") {
+let workflow = Workflow(
+    name: "Normalize and summarize"
+) {
     Step.custom("normalized") { context in
         .text(context.input.textValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -285,7 +297,9 @@ func makeToolExecutor(secrets: any SecretProvider, writePolicy: WritePolicy) -> 
                             toolServers: MCPConnector(secrets: secrets))
 }
 
-let workflow = Workflow("File issue") {
+let workflow = Workflow(
+    name: "File issue"
+) {
     Step.useTool("file", kit: "issues", tool: "create_issue", arguments: ["title": "{{input}}"])
 }
 ```
@@ -320,7 +334,9 @@ func makeDecisionExecutor(apiKey: String) -> WorkflowExecutor {
     return WorkflowExecutor(catalog: catalog)
 }
 
-let workflow = Workflow("Triage ticket") {
+let workflow = Workflow(
+    name: "Triage ticket"
+) {
     Step.decide("ticket", questions: [
         Question("damaged", "Does the customer report a damaged item?", .yesNo),
         Question("team", "Which team should handle it?", .choice([.init("billing"), .init("shipping")])),
