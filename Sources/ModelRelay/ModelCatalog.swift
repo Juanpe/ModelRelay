@@ -1,6 +1,6 @@
+import AnyLanguageModel
 import CoreText
 import Foundation
-import AnyLanguageModel
 import Vision
 
 /// Resolves a `ModelID` to an AnyLanguageModel `LanguageModel`. Apps compose
@@ -108,11 +108,16 @@ public struct TextRecognitionModel: LanguageModel, Hashable {
 
     public typealias UnavailableReason = Never
 
-    public func respond<Content: Generable>(within session: LanguageModelSession, to prompt: Prompt,
-        generating type: Content.Type, includeSchemaInPrompt: Bool, options: GenerationOptions
+    public func respond<Content: Generable>(
+        within session: LanguageModelSession,
+        to prompt: Prompt,
+        generating type: Content.Type,
+        includeSchemaInPrompt: Bool,
+        options: GenerationOptions
     ) async throws -> LanguageModelSession.Response<Content> {
         guard type == String.self, session.tools.isEmpty,
-              let image = Self.lastImage(in: session.transcript) else {
+              let image = Self.lastImage(in: session.transcript)
+        else {
             throw InvalidOutput(reason: "Apple Text Recognition only reads the text in images. Use it in Read Text in Image")
         }
         try Task.checkCancellation()
@@ -122,14 +127,23 @@ public struct TextRecognitionModel: LanguageModel, Hashable {
         return try .init(content: Content(raw), rawContent: raw, transcriptEntries: [])
     }
 
-    public func streamResponse<Content: Generable>(within session: LanguageModelSession, to prompt: Prompt,
-        generating type: Content.Type, includeSchemaInPrompt: Bool, options: GenerationOptions
+    public func streamResponse<Content: Generable>(
+        within session: LanguageModelSession,
+        to prompt: Prompt,
+        generating type: Content.Type,
+        includeSchemaInPrompt: Bool,
+        options: GenerationOptions
     ) -> sending LanguageModelSession.ResponseStream<Content> {
         .init(stream: AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let response = try await respond(within: session, to: prompt, generating: type,
-                        includeSchemaInPrompt: includeSchemaInPrompt, options: options)
+                    let response = try await respond(
+                        within: session,
+                        to: prompt,
+                        generating: type,
+                        includeSchemaInPrompt: includeSchemaInPrompt,
+                        options: options
+                    )
                     continuation.yield(.init(content: response.content.asPartiallyGenerated(), rawContent: response.rawContent))
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -139,9 +153,9 @@ public struct TextRecognitionModel: LanguageModel, Hashable {
     }
 
     private static func lastImage(in transcript: Transcript) -> CGImage? {
-        for case .prompt(let prompt) in transcript.reversed() {
-            for case .image(let image) in prompt.segments {
-                if case .data(let data, _) = image.source { return ImageCoding.picture(from: data) }
+        for case let .prompt(prompt) in transcript.reversed() {
+            for case let .image(image) in prompt.segments {
+                if case let .data(data, _) = image.source { return ImageCoding.picture(from: data) }
             }
             return nil
         }
@@ -152,8 +166,15 @@ public struct TextRecognitionModel: LanguageModel, Hashable {
     /// which can take a minute on a Mac. Call this in the background (say,
     /// when a workflow that uses it is opened) so the first run is quick.
     public static func prepare() async {
-        let context = CGContext(data: nil, width: 160, height: 48, bitsPerComponent: 8, bytesPerRow: 0,
-                                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        let context = CGContext(
+            data: nil,
+            width: 160,
+            height: 48,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        )
         guard let context else { return }
         context.setFillColor(gray: 1, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: 160, height: 48))
@@ -184,7 +205,8 @@ public struct TextRecognitionModel: LanguageModel, Hashable {
             var rows: [[(text: String, box: CGRect)]] = []
             for piece in pieces.sorted(by: { $0.box.midY > $1.box.midY }) {
                 if let first = rows.last?.first,
-                   abs(first.box.midY - piece.box.midY) < min(first.box.height, piece.box.height) / 2 {
+                   abs(first.box.midY - piece.box.midY) < min(first.box.height, piece.box.height) / 2
+                {
                     rows[rows.count - 1].append(piece)
                 } else {
                     rows.append([piece])

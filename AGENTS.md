@@ -25,6 +25,30 @@ belong in the host, not this package.
 9. Expose progress through async sequences, not notification callbacks.
    Keep cancellation, final results and metadata-only events explicit.
 
+## 🎨 Swift style
+
+- Keep `.swiftformat`, `.swiftlint.yml`, `.editorconfig` and the tool versions
+  aligned with Runline. Use `make format`, not Xcode's separate `swift-format`.
+- SwiftFormat 0.55.5 owns layout: four spaces, sorted imports (`@testable`
+  last), outdented `#if` and multiline arguments/parameters before the first item.
+  Put access modifiers on declarations, not extensions. Preserve explicit
+  `self`, useful type annotations and enum raw values.
+- Separate logical phases inside function bodies with one blank line:
+  preparation, execution, validation/error handling and the final result.
+  Keep related assignments and checks together; do not space every statement
+  or pad the start/end of a body. Preserve these groups when formatting.
+- Prefer `async/await` and async sequences. Cancel stored tasks explicitly;
+  in long-lived weak-self loops, unwrap inside the loop, not before it.
+- Reuse URL sessions; explicitly invalidate owned delegate sessions.
+- New service protocols use `Protocol`; ViewModel protocols use `Modeling`.
+  Do not rename existing public API just to satisfy a style rule.
+- `make check-style` checks formatting and SwiftLint 0.65.1 with the checked-in
+  baseline. `make lint-all` exposes existing debt. Do not grow the baseline
+  to hide new violations; remove entries as debt is fixed. Analyzer rules
+  require a compiler log and are separate from these lint checks.
+- Dependencies, generated files and recovered source copies are excluded.
+  The tool bootstrap downloads checksum-verified binaries into ignored `.tools/`.
+
 ## ✍️ Documentation style
 
 - Follow the root README's English, friendly, example-first voice.

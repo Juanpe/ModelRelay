@@ -49,8 +49,15 @@ public struct WorkflowExecutionCheckpoint: Codable, Sendable {
     var nextStep: Int
     var state: CheckpointValues
 
-    init(workflow: Workflow, revision: String, definition: String, policy: WorkflowExecutionPolicy,
-         limits: WorkflowExecutionLimits, executionID: UUID, state: CheckpointValues) {
+    init(
+        workflow: Workflow,
+        revision: String,
+        definition: String,
+        policy: WorkflowExecutionPolicy,
+        limits: WorkflowExecutionLimits,
+        executionID: UUID,
+        state: CheckpointValues
+    ) {
         schemaVersion = 2
         self.executionID = executionID
         workflowID = workflow.id

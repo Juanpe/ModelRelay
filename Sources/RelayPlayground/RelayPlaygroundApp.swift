@@ -31,8 +31,10 @@ struct Sample: Identifiable, Hashable, Sendable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
     static let all: [Sample] = [
-        Sample(id: "Receipt to expense",
-               input: "BLUE BOTTLE COFFEE\nFlat white 4.50\nCroissant 3.80\nTOTAL EUR 8.30\n12/10/2026") { model, fallback in
+        Sample(
+            id: "Receipt to expense",
+            input: "BLUE BOTTLE COFFEE\nFlat white 4.50\nCroissant 3.80\nTOTAL EUR 8.30\n12/10/2026"
+        ) { model, fallback in
             Workflow(name: "Receipt to expense", steps: [
                 Step("expense", .extract(instruction: "Extract the expense from this receipt. total is the final amount paid.", fields: [
                     Field("merchant", .text), Field("total", .number), Field("currency", .choice(["EUR", "USD", "GBP"])),
@@ -40,24 +42,41 @@ struct Sample: Identifiable, Hashable, Sendable {
                 ]), model: model, fallback: fallback),
             ])
         },
-        Sample(id: "Triage a message",
-               input: "Your flight to Lisbon leaves in 2 hours, gate changed to B12.") { model, fallback in
+        Sample(
+            id: "Triage a message",
+            input: "Your flight to Lisbon leaves in 2 hours, gate changed to B12."
+        ) { model, fallback in
             Workflow(name: "Triage", steps: [
-                Step("label", .classify(instruction: "Does this need attention today?", labels: ["urgent", "later"]),
-                     model: model, fallback: fallback),
+                Step(
+                    "label",
+                    .classify(instruction: "Does this need attention today?", labels: ["urgent", "later"]),
+                    model: model,
+                    fallback: fallback
+                ),
                 Step("route", .ifEquals(reference: "label", value: "urgent",
-                    then: [Step("reply", .prompt(instruction: "Write a one-sentence acknowledgement for this message."),
-                                input: "input", model: model, fallback: fallback)],
-                    otherwise: [Step("note", .template("Saved for later: {{input}}"))])),
+                                        then: [Step(
+                                            "reply",
+                                            .prompt(instruction: "Write a one-sentence acknowledgement for this message."),
+                                            input: "input",
+                                            model: model,
+                                            fallback: fallback
+                                        )],
+                                        otherwise: [Step("note", .template("Saved for later: {{input}}"))])),
             ])
         },
-        Sample(id: "Summary and tone",
-               input: "The launch went better than expected: 3,000 sign-ups on day one, two crash reports, both fixed.") { model, fallback in
+        Sample(
+            id: "Summary and tone",
+            input: "The launch went better than expected: 3,000 sign-ups on day one, two crash reports, both fixed."
+        ) { model, fallback in
             Workflow(name: "Summary and tone", steps: [
                 Step("both", .parallel([
                     Step("summary", .prompt(instruction: "Summarize in one short sentence."), model: model, fallback: fallback),
-                    Step("tone", .classify(instruction: "What is the tone?", labels: ["positive", "neutral", "negative"]),
-                         model: model, fallback: fallback),
+                    Step(
+                        "tone",
+                        .classify(instruction: "What is the tone?", labels: ["positive", "neutral", "negative"]),
+                        model: model,
+                        fallback: fallback
+                    ),
                 ])),
                 Step("card", .template("{{summary}} — {{tone}}")),
             ])
@@ -79,17 +98,18 @@ final class PlaygroundModel {
 
     let models: [ModelID] = {
         var ids: [ModelID] = [.appleOnDevice, .applePrivateCloud]
-        #if MLX
+#if MLX
         ids += MLXModels.ids.sorted { $0.rawValue < $1.rawValue }
-        #endif
+#endif
         return ids
     }()
+
     private let executor: WorkflowExecutor = {
         var catalog = ModelCatalog()
-        #if MLX
+#if MLX
         // MLX weights download from Hugging Face the first time a model runs.
         catalog.registerMLXModels()
-        #endif
+#endif
         return WorkflowExecutor(catalog: catalog)
     }()
 
@@ -158,14 +178,20 @@ struct ResultView: View {
     var body: some View {
         switch phase {
         case .idle:
-            ContentUnavailableView("Run a workflow", systemImage: "arrow.triangle.branch",
-                                   description: Text("Pick a sample and a model, then press Run (⌘↩)."))
+            ContentUnavailableView(
+                "Run a workflow",
+                systemImage: "arrow.triangle.branch",
+                description: Text("Pick a sample and a model, then press Run (⌘↩).")
+            )
         case .running:
             ProgressView("Running…").frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let message):
-            ContentUnavailableView("The run failed", systemImage: "exclamationmark.triangle",
-                                   description: Text(message).font(.callout.monospaced()))
-        case .done(let report):
+        case let .failed(message):
+            ContentUnavailableView(
+                "The run failed",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message).font(.callout.monospaced())
+            )
+        case let .done(report):
             List {
                 Section("Output · \(report.duration.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))") {
                     Text(report.output.textValue)

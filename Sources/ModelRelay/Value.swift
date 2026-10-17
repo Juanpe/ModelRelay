@@ -1,5 +1,5 @@
-import Foundation
 import AnyLanguageModel
+import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -21,14 +21,14 @@ public enum Value: Codable, Sendable, Hashable {
     public var textValue: String {
         switch self {
         case .null: ""
-        case .text(let text): text
-        case .number(let number):
+        case let .text(text): text
+        case let .number(number):
             number.rounded() == number && abs(number) < 1e15 ? String(Int64(number)) : String(number)
-        case .bool(let bool): bool ? "true" : "false"
-        case .list(let items): items.map(\.textValue).joined(separator: "\n")
-        case .dictionary(let fields):
+        case let .bool(bool): bool ? "true" : "false"
+        case let .list(items): items.map(\.textValue).joined(separator: "\n")
+        case let .dictionary(fields):
             fields.keys.sorted().map { "\($0): \(fields[$0]?.textValue ?? "")" }.joined(separator: "\n")
-        case .image(let image): image.text ?? ""
+        case let .image(image): image.text ?? ""
         }
     }
 
@@ -37,8 +37,10 @@ public enum Value: Codable, Sendable, Hashable {
     var modelText: String {
         switch self {
         case .list, .dictionary:
-            guard let data = try? JSONSerialization.data(withJSONObject: jsonObject,
-                                                         options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else {
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: jsonObject,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            ) else {
                 return textValue
             }
             return String(decoding: data, as: UTF8.self)
@@ -62,18 +64,18 @@ public enum Value: Codable, Sendable, Hashable {
 
     /// A field of a dictionary, or nil.
     public subscript(field: String) -> Value? {
-        if case .dictionary(let fields) = self { return fields[field] }
+        if case let .dictionary(fields) = self { return fields[field] }
         return nil
     }
 
     init(_ content: GeneratedContent) {
         switch content.kind {
         case .null: self = .null
-        case .bool(let bool): self = .bool(bool)
-        case .number(let number): self = .number(number)
-        case .string(let string): self = .text(string)
-        case .array(let items): self = .list(items.map(Value.init))
-        case .structure(let properties, _): self = .dictionary(properties.mapValues(Value.init))
+        case let .bool(bool): self = .bool(bool)
+        case let .number(number): self = .number(number)
+        case let .string(string): self = .text(string)
+        case let .array(items): self = .list(items.map(Value.init))
+        case let .structure(properties, _): self = .dictionary(properties.mapValues(Value.init))
         @unknown default: self = .text(content.jsonString)
         }
     }
@@ -122,8 +124,11 @@ package enum ImageCoding {
 
     /// JPEG (PNG when it has transparency, which JPEG would turn black),
     /// upright and at most `maxPixels` on its long side, as chat APIs want it.
-    package static func encoded(_ image: CGImage, orientation: CGImagePropertyOrientation = .up,
-                                maxPixels: Int = 2048) -> (data: Data, contentType: String)? {
+    package static func encoded(
+        _ image: CGImage,
+        orientation: CGImagePropertyOrientation = .up,
+        maxPixels: Int = 2048
+    ) -> (data: Data, contentType: String)? {
         var image = image
         if orientation != .up {
             // Apply the orientation by writing it out and reading it back.

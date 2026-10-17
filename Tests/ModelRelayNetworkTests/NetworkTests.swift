@@ -1,9 +1,9 @@
 import AnyLanguageModel
 import Foundation
-import Synchronization
-import Testing
 import ModelRelay
 import ModelRelayHTTP
+import Synchronization
+import Testing
 @testable import ModelRelayCloud
 
 /// Answers every URLSession request locally with a scripted reply and keeps
@@ -45,9 +45,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             }
             stream.close()
         }
-        Self.sent.append(Sent(url: request.url!, method: request.httpMethod ?? "GET",
-                              headers: request.allHTTPHeaderFields ?? [:],
-                              body: body))
+        Self.sent.append(Sent(
+            url: request.url!,
+            method: request.httpMethod ?? "GET",
+            headers: request.allHTTPHeaderFields ?? [:],
+            body: body
+        ))
         let next = Self.queue.isEmpty ? Self.reply : Self.queue.removeFirst()
         var headers = Self.headerQueue.isEmpty ? [:] : Self.headerQueue.removeFirst()
         let streaming = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["stream"] as? Bool == true
@@ -55,7 +58,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         else if headers["Content-Type"] == nil { headers["Content-Type"] = "application/json" }
         let response = HTTPURLResponse(url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: (streaming ? ProviderStreamFixture.data(from: Self.providerEnvelope(next.body)) : Self.providerEnvelope(next.body)))
+        client?.urlProtocol(self, didLoad: streaming ? ProviderStreamFixture.data(from: Self.providerEnvelope(next.body)) : Self.providerEnvelope(next.body))
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -92,15 +95,20 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     private func receipt(model: ModelID) -> Workflow {
         Workflow(name: "Receipt", steps: [
-            Step("expense", .extract(instruction: "Read the receipt.", fields: [Field("merchant", .text), Field("total", .number)]),
-                 model: model),
+            Step(
+                "expense",
+                .extract(instruction: "Read the receipt.", fields: [Field("merchant", .text), Field("total", .number)]),
+                model: model
+            ),
         ])
     }
 
     @Test func urlSessionPerformerSendsTheRequest() async throws {
         StubProtocol.reply = (200, #"{"temp": 21}"#)
-        let executor = WorkflowExecutor(requests: URLSessionRequestPerformer(configuration: StubProtocol.configuration()),
-                                    writePolicy: .allow)
+        let executor = WorkflowExecutor(
+            requests: URLSessionRequestPerformer(configuration: StubProtocol.configuration()),
+            writePolicy: .allow
+        )
         let workflow = Workflow(name: "Post", steps: [
             Step("post", .request(HTTPRequest(.post, url: "https://api.test/items", body: #"{"name": "{{input}}"}"#))),
         ])
@@ -184,7 +192,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             _ = try await WorkflowExecutor(catalog: ModelCatalog().registering(decisions: "decision") { model })
                 .run(workflow, input: .null)
             Issue.record("expected authentication failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.category == .authenticationRequired)
             #expect((failure.rootCause as? CloudModelError)?.status == 401)
             #expect(!failure.info.message.contains("jev-private-key"))
@@ -228,8 +236,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     private var weatherAgent: (ModelID) -> Workflow {
         { model in
             Workflow(name: "W", steps: [Step("answer", .agent(instruction: "Answer.", tools: [
-                AgentTool(name: "getWeather", description: "Weather for a city.", parameters: [Field("city", .text)],
-                          request: HTTPRequest(url: "https://weather.test/?q={{args.city}}")),
+                AgentTool(
+                    name: "getWeather",
+                    description: "Weather for a city.",
+                    parameters: [Field("city", .text)],
+                    request: HTTPRequest(url: "https://weather.test/?q={{args.city}}")
+                ),
             ]), model: model)])
         }
     }
@@ -284,8 +296,15 @@ import UniformTypeIdentifiers
 extension NetworkTests {
     /// A plain grey picture, as PNG.
     private func photo(width: Int = 300, height: Int = 200) -> ImageValue {
-        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        )!
         context.setFillColor(CGColor(gray: 0.5, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let data = NSMutableData()

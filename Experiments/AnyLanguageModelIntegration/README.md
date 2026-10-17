@@ -1,6 +1,6 @@
 # 🗃 Retired runtime experiment
 
-[← README](../../README.md) · [Migration](../../Documentation/NativeRuntimeMigration.md)
+[← README](../../README.md) · [Integration](../../Documentation/Integration.md)
 
 > 📣 Historical context, not a build recipe.
 

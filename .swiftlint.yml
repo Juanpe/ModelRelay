@@ -1,0 +1,141 @@
+# Layout rules are handled by SwiftFormat.
+opt_in_rules:
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - untyped_error_in_catch
+  - static_operator
+
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - first_where
+  - last_where
+  - reduce_into
+  - sorted_first_last
+  - flatmap_over_map_reduce
+
+  - unowned_variable_capture
+  - discarded_notification_center_observer
+
+  - toggle_bool
+  - redundant_nil_coalescing
+  - pattern_matching_keywords
+  - legacy_multiple
+  - shorthand_argument
+  - prefer_self_type_over_type_of_self
+  - unavailable_condition
+
+  - final_test_case
+  - empty_xctest_method
+  - xct_specific_matcher
+  - test_case_accessibility
+  - balanced_xctest_lifecycle
+  - xctfail_message
+  - single_test_class
+
+  - no_magic_numbers
+  - unused_optional_binding
+  - prefer_self_in_static_references
+  - unavailable_function
+  - closure_body_length
+  - function_parameter_count
+  - function_default_parameter_at_end
+  - multiline_function_chains
+  - explicit_type_interface
+  - explicit_enum_raw_value
+  - convenience_type
+  - todo
+
+  - identical_operands
+  - redundant_type_annotation
+  - static_over_final_class
+  - lower_acl_than_parent
+
+  - private_subject
+
+analyzer_rules:
+  - capture_variable
+
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  - opening_brace
+  - colon
+  - comma
+  - trailing_comma
+  - vertical_whitespace
+
+  - empty_count
+  - shorthand_optional_binding
+  - direct_return
+  - vertical_parameter_alignment_on_call
+
+cyclomatic_complexity:
+  warning: 8
+  error: 15
+  ignores_case_statements: false
+
+nesting:
+  type_level: 3
+  function_level: 3
+
+function_body_length:
+  warning: 40
+  error: 80
+
+closure_body_length:
+  warning: 20
+  error: 40
+
+function_parameter_count:
+  warning: 4
+  error: 6
+
+type_body_length:
+  warning: 200
+
+file_length:
+  warning: 400
+
+identifier_name:
+  min_length: 2
+  max_length: 40
+  excluded:
+    - id
+    - i
+    - j
+    - k
+    - x
+    - y
+    - z
+    - db
+    - to
+    - vc
+
+type_name:
+  min_length: 3
+  max_length: 40
+
+no_magic_numbers:
+  severity: warning
+  test_parent_classes:
+    - XCTestCase
+    - QuickSpec
+
+included:
+  - .
+
+excluded:
+  - .build
+  - .swiftpm
+  - tmp
+  - .tools
+  - DerivedData
+  - "**/.build"
+  - "**/.swiftpm"
+  - "**/SourcePackages"
+  - "**/RecoveredSources"
+  - "**/*.generated.swift"
+  - "**/*.pb.swift"
+  - "**/Package.swift"

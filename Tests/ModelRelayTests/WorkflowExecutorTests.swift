@@ -104,8 +104,12 @@ import Testing
 
     @Test func workflowsRoundTripAsJSON() throws {
         let workflow = Workflow(name: "Receipt", steps: [
-            Step("expense", .extract(instruction: "Read.", fields: [Field("tags", .list(.choice(["food", "travel"])))]),
-                 model: .appleOnDevice, fallback: "mlx:qwen"),
+            Step(
+                "expense",
+                .extract(instruction: "Read.", fields: [Field("tags", .list(.choice(["food", "travel"])))]),
+                model: .appleOnDevice,
+                fallback: "mlx:qwen"
+            ),
             Step("both", .parallel([Step("t", .template("{{expense.tags}}"))])),
         ])
         let data = try JSONEncoder().encode(workflow)

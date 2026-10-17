@@ -1,6 +1,6 @@
+import AnyLanguageModel
 import Foundation
 import Synchronization
-import AnyLanguageModel
 
 struct InvalidOutput: Error, CustomStringConvertible {
     var reason: String
@@ -78,11 +78,17 @@ public actor WorkflowExecutor {
     /// something also need a `writePolicy` that allows them. Custom bodies
     /// use the same cooperative timeout and run once, without fallback.
     /// Tool sets with a server need `toolServers`.
-    public init(catalog: ModelCatalog = ModelCatalog(), stepTimeout: Duration = .seconds(30),
-                requests: (any RequestPerformer)? = nil, secrets: (any SecretProvider)? = nil,
-                writePolicy: WritePolicy = .deny, toolKits: [ToolKit] = [],
-                toolServers: (any ToolServerConnector)? = nil, policy: WorkflowExecutionPolicy = .unrestricted,
-                limits: WorkflowExecutionLimits = .unlimited) {
+    public init(
+        catalog: ModelCatalog = ModelCatalog(),
+        stepTimeout: Duration = .seconds(30),
+        requests: (any RequestPerformer)? = nil,
+        secrets: (any SecretProvider)? = nil,
+        writePolicy: WritePolicy = .deny,
+        toolKits: [ToolKit] = [],
+        toolServers: (any ToolServerConnector)? = nil,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) {
         self.catalog = catalog
         self.policy = policy
         self.limits = limits
@@ -92,37 +98,50 @@ public actor WorkflowExecutor {
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
 
-    public func run(_ workflow: Workflow, input: Value,
-                    policy: WorkflowExecutionPolicy = .unrestricted,
-                    limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionReport {
+    public func run(
+        _ workflow: Workflow,
+        input: Value,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) async throws -> WorkflowExecutionReport {
         try await runObserved(workflow, input: input, policy: policy, limits: limits, onStep: nil, onEvent: nil)
     }
 
     /// Starts immediately; consume updates once and await `result` for the report.
-    public nonisolated func stream(_ workflow: Workflow, input: Value,
-                                   policy: WorkflowExecutionPolicy = .unrestricted,
-                                   limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionReport> {
+    public nonisolated func stream(
+        _ workflow: Workflow,
+        input: Value,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) -> WorkflowExecutionStream<WorkflowExecutionReport> {
         WorkflowExecutionStream { onStep, onEvent in
             try await self.runObserved(workflow, input: input, policy: policy, limits: limits, onStep: onStep, onEvent: onEvent)
         }
     }
 
-    private func runObserved(_ workflow: Workflow, input: Value,
-                             policy: WorkflowExecutionPolicy, limits: WorkflowExecutionLimits,
-                             onStep: (@Sendable (StepRecord) -> Void)?,
-                             onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionReport {
+    private func runObserved(
+        _ workflow: Workflow,
+        input: Value,
+        policy: WorkflowExecutionPolicy,
+        limits: WorkflowExecutionLimits,
+        onStep: (@Sendable (StepRecord) -> Void)?,
+        onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?
+    ) async throws -> WorkflowExecutionReport {
         try workflow.validateContexts()
         try workflow.validateApprovals(recoverable: false)
         try preflight(workflow)
         try self.limits.validate(); try limits.validate()
+
         let control = ExecutionControl(workflowID: workflow.id, limits: self.limits.narrowed(by: limits), observer: onEvent)
         defer { control.finish() }
         control.emit(.executionStarted)
+
         do {
             let report = try await control.withDeadline {
                 try await self.execute(workflow, input: input, policy: policy, control: control, onStep: onStep)
             }
             control.emit(.executionCompleted)
+
             return report
         } catch {
             control.emit(error is CancellationError ? .executionCancelled : .executionFailed, category: failureCategory(error))
@@ -140,21 +159,36 @@ public actor WorkflowExecutor {
         if !issues.isEmpty { throw WorkflowValidationError(issues: issues) }
     }
 
-    private func execute(_ workflow: Workflow, input: Value, policy: WorkflowExecutionPolicy,
-                         control: ExecutionControl, onStep: (@Sendable (StepRecord) -> Void)?) async throws -> WorkflowExecutionReport {
+    private func execute(
+        _ workflow: Workflow,
+        input: Value,
+        policy: WorkflowExecutionPolicy,
+        control: ExecutionControl,
+        onStep: (@Sendable (StepRecord) -> Void)?
+    ) async throws -> WorkflowExecutionReport {
         let resources = ExecutionResources()
         var scope = Scope(input: input, policy: self.policy.combined(with: policy), resources: resources, control: control, observer: onStep)
+
         do {
             let last = try await runSteps(workflow.steps, scope: &scope)
+
             let output: Value
             if let name = workflow.output {
                 guard let value = scope.results[name] else { throw RelayError.unknownReference(name, step: "Output") }
                 output = value
             } else { output = last }
+
             await resources.finish()
-            return WorkflowExecutionReport(output: output, records: scope.records, duration: control.duration,
+
+            return WorkflowExecutionReport(
+                output: output,
+                records: scope.records,
+                duration: control.duration,
                 outputDataAccess: workflow.output.flatMap { scope.valuePolicies[$0] } ?? scope.outputData,
-                executionID: control.executionID, workflowID: workflow.id, usage: control.usage)
+                executionID: control.executionID,
+                workflowID: workflow.id,
+                usage: control.usage
+            )
         } catch {
             await resources.finish()
             throw error
@@ -178,8 +212,13 @@ public actor WorkflowExecutor {
         var previous: Value
         let observer: (@Sendable (StepRecord) -> Void)?
 
-        init(input: Value, policy: WorkflowExecutionPolicy, resources: ExecutionResources, control: ExecutionControl,
-             observer: (@Sendable (StepRecord) -> Void)? = nil) {
+        init(
+            input: Value,
+            policy: WorkflowExecutionPolicy,
+            resources: ExecutionResources,
+            control: ExecutionControl,
+            observer: (@Sendable (StepRecord) -> Void)? = nil
+        ) {
             self.input = input
             self.policy = policy
             self.resources = resources
@@ -194,7 +233,7 @@ public actor WorkflowExecutor {
         mutating func record(_ record: StepRecord) {
             var record = record
             record.dataAccess = outputData
-            if case .conversation(let name) = currentContext { record.conversation = name }
+            if case let .conversation(name) = currentContext { record.conversation = name }
             records.append(record)
             observer?(record)
             if record.skipped { control.emit(.stepSkipped, step: record.step) }
@@ -206,7 +245,7 @@ public actor WorkflowExecutor {
         }
 
         func source(for step: Step) throws -> Value {
-            if case .handoff(let references) = step.context {
+            if case let .handoff(references) = step.context {
                 var values: [String: Value] = [:]
                 for reference in references {
                     guard let value = resolve(reference) else { throw RelayError.unknownReference(reference, step: step.name) }
@@ -214,10 +253,12 @@ public actor WorkflowExecutor {
                 }
                 return .dictionary(values)
             }
+
             if let reference = step.input {
                 guard let value = resolve(reference) else { throw RelayError.unknownReference(reference, step: step.name) }
                 return value
             }
+
             return previous
         }
 
@@ -225,8 +266,10 @@ public actor WorkflowExecutor {
         func resolve(_ reference: String) -> Value? {
             let parts = reference.split(separator: ".", maxSplits: 1).map(String.init)
             guard let name = parts.first else { return nil }
+
             let base = name == "input" ? input : results[name]
             guard let base else { return nil }
+
             return parts.count == 2 ? base[parts[1]] : base
         }
     }
@@ -237,6 +280,7 @@ public actor WorkflowExecutor {
             let value = try await runRecordingFailure(step, scope: &scope)
             scope.accept(value, for: step)
         }
+
         return scope.previous
     }
 
@@ -248,9 +292,11 @@ public actor WorkflowExecutor {
         let inherited = scope.policy
         let previousContext = scope.currentContext
         defer { scope.policy = inherited; scope.currentContext = previousContext }
+
         let leaf = !Self.isBlock(step)
         if leaf { try await scope.control.acquire() }
         scope.control.emit(.stepStarted, step: step.name)
+
         do {
             try scope.control.check()
             for (template, secrets, arguments) in Workflow.templates(in: step) {
@@ -258,11 +304,14 @@ public actor WorkflowExecutor {
                     guard scope.resolve(ref) != nil else { throw RelayError.unknownReference(ref, step: step.name) }
                 }
             }
+
             scope.policy = await effectivePolicy(for: step, scope: scope)
             try Task.checkCancellation()
             scope.currentContext = step.context
             scope.outputData = scope.policy.data
+
             let value = try await runStep(step, scope: &scope, trace: trace)
+
             scope.control.emit(.stepCompleted, step: step.name)
             if leaf { await scope.control.release() }
             return value
@@ -271,10 +320,21 @@ public actor WorkflowExecutor {
             throw CancellationError()
         } catch {
             if !Self.isBlock(step) {
-                scope.record(StepRecord(step: step.name, value: .null, model: step.model, usedFallback: false,
-                                        duration: clock.now - start, skipped: false, input: trace.input,
-                                        failure: failureReason(error), failureInfo: .init(category: failureCategory(error),
-                                            message: failureReason(error), outcomeUncertain: Self.uncertain(error))))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: .null,
+                    model: step.model,
+                    usedFallback: false,
+                    duration: clock.now - start,
+                    skipped: false,
+                    input: trace.input,
+                    failure: failureReason(error),
+                    failureInfo: .init(
+                        category: failureCategory(error),
+                        message: failureReason(error),
+                        outcomeUncertain: Self.uncertain(error)
+                    )
+                ))
             }
             scope.control.emit(.stepFailed, step: step.name, category: failureCategory(error))
             if leaf { await scope.control.release() }
@@ -297,13 +357,19 @@ public actor WorkflowExecutor {
         context.control = scope.control
 
         switch step.kind {
-        case .template(let template):
+        case let .template(template):
             let value = Value.text(Template.render(template, scope.resolve))
-            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
-                                            duration: clock.now - start, skipped: false))
+            scope.record(StepRecord(
+                step: step.name,
+                value: value,
+                model: nil,
+                usedFallback: false,
+                duration: clock.now - start,
+                skipped: false
+            ))
             return value
 
-        case .custom(let body):
+        case let .custom(body):
             trace.input = source.textValue
             let values = CustomStepContext(input: source, workflowInput: scope.input, results: scope.results)
             let value: Value
@@ -316,11 +382,19 @@ public actor WorkflowExecutor {
                 try Self.rethrowCancellation(error)
                 throw operationFailure(step: step.name, error: error, uncertain: true)
             }
-            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
-                                    duration: clock.now - start, skipped: false, input: trace.input))
+            scope.record(StepRecord(
+                step: step.name,
+                value: value,
+                model: nil,
+                usedFallback: false,
+                duration: clock.now - start,
+                skipped: false,
+                input: trace.input
+            ))
+
             return value
 
-        case .useTool(let kitID, let toolName, let arguments):
+        case let .useTool(kitID, toolName, arguments):
             guard let kit = toolKits[kitID] else {
                 throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
             }
@@ -360,41 +434,69 @@ public actor WorkflowExecutor {
                     return scope.resolve(reference)
                 }
             }
-            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
-                                    duration: clock.now - start, skipped: false, input: trace.input))
+            scope.record(StepRecord(
+                step: step.name,
+                value: value,
+                model: nil,
+                usedFallback: false,
+                duration: clock.now - start,
+                skipped: false,
+                input: trace.input
+            ))
             return value
 
-        case .request(let request):
+        case let .request(request):
             let value = try await context.perform(request, step: step.name, trace: trace, resolve: scope.resolve)
-            scope.record(StepRecord(step: step.name, value: value, model: nil, usedFallback: false,
-                                    duration: clock.now - start, skipped: false, input: trace.input))
+            scope.record(StepRecord(
+                step: step.name,
+                value: value,
+                model: nil,
+                usedFallback: false,
+                duration: clock.now - start,
+                skipped: false,
+                input: trace.input
+            ))
             return value
 
-        case .ifEquals(let reference, let expected, let then, let otherwise):
+        case let .ifEquals(reference, expected, then, otherwise):
             guard let value = scope.resolve(reference) else { throw RelayError.unknownReference(reference, step: step.name) }
             let branch = value.textValue == expected ? then : otherwise
             let skipped = value.textValue == expected ? otherwise : then
             for step in skipped.flatMap(Self.flatten) {
-                scope.record(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
-                                                duration: .zero, skipped: true))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: .null,
+                    model: nil,
+                    usedFallback: false,
+                    duration: .zero,
+                    skipped: true
+                ))
             }
             return try await runSteps(branch, scope: &scope)
 
-        case .switchOn(let reference, let cases, let otherwise):
+        case let .switchOn(reference, cases, otherwise):
             guard let value = scope.resolve(reference) else { throw RelayError.unknownReference(reference, step: step.name) }
             let key = value.textValue.trimmingCharacters(in: .whitespacesAndNewlines)
             let chosen = cases.firstIndex { $0.value.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(key) == .orderedSame }
             let branch = chosen.map { cases[$0].steps } ?? otherwise
             var skipped = otherwise
-            for (index, item) in cases.enumerated() where index != chosen { skipped += item.steps }
+            for (index, item) in cases.enumerated() where index != chosen {
+                skipped += item.steps
+            }
             if chosen == nil { skipped = cases.flatMap(\.steps) }
             for step in skipped.flatMap(Self.flatten) {
-                scope.record(StepRecord(step: step.name, value: .null, model: nil, usedFallback: false,
-                                                duration: .zero, skipped: true))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: .null,
+                    model: nil,
+                    usedFallback: false,
+                    duration: .zero,
+                    skipped: true
+                ))
             }
             return try await runSteps(branch, scope: &scope)
 
-        case .parallel(let steps):
+        case let .parallel(steps):
             let snapshot = scope
             let results = try await withThrowingTaskGroup(of: (Int, Value, [StepRecord], WorkflowExecutionPolicy.DataAccess).self) { group in
                 for (index, child) in steps.enumerated() {
@@ -406,7 +508,9 @@ public actor WorkflowExecutor {
                     }
                 }
                 var collected: [(Int, Value, [StepRecord], WorkflowExecutionPolicy.DataAccess)] = []
-                for try await result in group { collected.append(result) }
+                for try await result in group {
+                    collected.append(result)
+                }
                 return collected.sorted { $0.0 < $1.0 }
             }
             var merged: [String: Value] = [:]
@@ -419,11 +523,11 @@ public actor WorkflowExecutor {
             }
             return .dictionary(merged)
 
-        case .agent(_, let ownTools, let kitIDs):
+        case let .agent(_, ownTools, kitIDs):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             var specs = ownTools
             var servers: [(ToolKit, any ToolServerConnection, [ServerTool])] = []
-            for id in (scope.policy.tools == .denied ? [] : kitIDs ?? []) {
+            for id in scope.policy.tools == .denied ? [] : kitIDs ?? [] {
                 guard let kit = toolKits[id] else {
                     throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(id)” isn't available")
                 }
@@ -444,8 +548,14 @@ public actor WorkflowExecutor {
                 RequestTool(spec: $0, step: step.name, context: context, log: log, resolve: { snapshot.resolve($0) })
             }
             for (kit, connection, list) in servers {
-                tools += list.filter { scope.policy.allowsTool(changesSomething: $0.changesSomething) }.map { ServerToolCall(tool: $0, kit: kit, connection: connection, step: step.name,
-                                                   context: context, log: log) }
+                tools += list.filter { scope.policy.allowsTool(changesSomething: $0.changesSomething) }.map { ServerToolCall(
+                    tool: $0,
+                    kit: kit,
+                    connection: connection,
+                    step: step.name,
+                    context: context,
+                    log: log
+                ) }
             }
             var model = primary
             var usedFallback = false
@@ -471,11 +581,19 @@ public actor WorkflowExecutor {
                     throw operationFailure(step: step.name, error: error, uncertain: log.mayHaveWritten)
                 }
             }
-            scope.record(StepRecord(step: step.name, value: value, model: model, usedFallback: usedFallback,
-                                    duration: clock.now - start, skipped: false, toolCalls: log.calls, input: prompt))
+            scope.record(StepRecord(
+                step: step.name,
+                value: value,
+                model: model,
+                usedFallback: usedFallback,
+                duration: clock.now - start,
+                skipped: false,
+                toolCalls: log.calls,
+                input: prompt
+            ))
             return value
 
-        case .decide(let questions):
+        case let .decide(questions):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
             if let problem = Question.problem(in: questions) {
                 throw RelayError.stepFailed(step: step.name, reason: problem)
@@ -484,8 +602,15 @@ public actor WorkflowExecutor {
             trace.input = text
             do {
                 let value = try await decide(questions, about: text, model: primary, step: step, scope: scope)
-                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
-                                        duration: clock.now - start, skipped: false, input: text))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: value,
+                    model: primary,
+                    usedFallback: false,
+                    duration: clock.now - start,
+                    skipped: false,
+                    input: text
+                ))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
@@ -497,8 +622,15 @@ public actor WorkflowExecutor {
                 scope.control.emit(.fallbackSelected, step: step.name, model: fallback)
                 do {
                     let value = try await decide(questions, about: text, model: fallback, step: step, scope: scope)
-                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
-                                            duration: clock.now - start, skipped: false, input: text))
+                    scope.record(StepRecord(
+                        step: step.name,
+                        value: value,
+                        model: fallback,
+                        usedFallback: true,
+                        duration: clock.now - start,
+                        skipped: false,
+                        input: text
+                    ))
                     return value
                 } catch {
                     try Self.rethrowCancellation(error)
@@ -506,20 +638,30 @@ public actor WorkflowExecutor {
                 }
             }
 
-        case .readImage(let instruction):
+        case let .readImage(instruction):
             guard let primary = step.model else { throw RelayError.missingModel(step: step.name) }
-            guard case .image(let image) = source else {
+            guard case let .image(image) = source else {
                 throw RelayError.stepFailed(step: step.name, reason: "it needs an image, and got \(source.kindName)")
             }
-            let text = Template.render(instruction.isEmpty ? ImageReading.defaultInstruction : instruction, scope.resolve,
-                                       text: \.modelText)
+            let text = Template.render(
+                instruction.isEmpty ? ImageReading.defaultInstruction : instruction,
+                scope.resolve,
+                text: \.modelText
+            )
             // The picture itself is never kept: the trace says what it was.
             let input = "\(text)\n\n[\(ImageReading.describe(image))]"
             trace.input = input
             do {
                 let value = try await read(image, instruction: text, model: primary, step: step, scope: scope)
-                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
-                                        duration: clock.now - start, skipped: false, input: input))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: value,
+                    model: primary,
+                    usedFallback: false,
+                    duration: clock.now - start,
+                    skipped: false,
+                    input: input
+                ))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
@@ -531,8 +673,15 @@ public actor WorkflowExecutor {
                 scope.control.emit(.fallbackSelected, step: step.name, model: fallback)
                 do {
                     let value = try await read(image, instruction: text, model: fallback, step: step, scope: scope)
-                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
-                                            duration: clock.now - start, skipped: false, input: input))
+                    scope.record(StepRecord(
+                        step: step.name,
+                        value: value,
+                        model: fallback,
+                        usedFallback: true,
+                        duration: clock.now - start,
+                        skipped: false,
+                        input: input
+                    ))
                     return value
                 } catch {
                     try Self.rethrowCancellation(error)
@@ -546,8 +695,15 @@ public actor WorkflowExecutor {
             trace.input = prompt
             do {
                 let value = try await generate(step.kind, prompt: prompt, model: primary, step: step, scope: scope)
-                scope.record(StepRecord(step: step.name, value: value, model: primary, usedFallback: false,
-                                        duration: clock.now - start, skipped: false, input: prompt))
+                scope.record(StepRecord(
+                    step: step.name,
+                    value: value,
+                    model: primary,
+                    usedFallback: false,
+                    duration: clock.now - start,
+                    skipped: false,
+                    input: prompt
+                ))
                 return value
             } catch let error as RelayError where error == .unknownModel(primary) {
                 throw error
@@ -560,8 +716,15 @@ public actor WorkflowExecutor {
                 scope.control.emit(.fallbackSelected, step: step.name, model: fallback)
                 do {
                     let value = try await generate(step.kind, prompt: prompt, model: fallback, step: step, scope: scope)
-                    scope.record(StepRecord(step: step.name, value: value, model: fallback, usedFallback: true,
-                                            duration: clock.now - start, skipped: false, input: prompt))
+                    scope.record(StepRecord(
+                        step: step.name,
+                        value: value,
+                        model: fallback,
+                        usedFallback: true,
+                        duration: clock.now - start,
+                        skipped: false,
+                        input: prompt
+                    ))
                     return value
                 } catch {
                     try Self.rethrowCancellation(error)
@@ -574,30 +737,34 @@ public actor WorkflowExecutor {
     private func effectivePolicy(for step: Step, scope: Scope) async -> WorkflowExecutionPolicy {
         var policy = scope.policy.combined(with: step.policy ?? .unrestricted)
         var references = Workflow.templates(in: step).flatMap { Template.references(in: $0.0) }
-        if case .handoff(let values) = step.context { references += values }
+        if case let .handoff(values) = step.context { references += values }
         else if let input = step.input { references.append(input) }
         else { policy.data = policy.data.combined(with: scope.previousData) }
         switch step.kind {
-        case .ifEquals(let value, _, _, _), .switchOn(let value, _, _): references.append(value)
+        case let .ifEquals(value, _, _, _), let .switchOn(value, _, _): references.append(value)
         case .custom:
             // Custom bodies can read every result and the original input.
             policy.data = policy.data.combined(with: scope.inputData)
-            for value in scope.valuePolicies.values { policy.data = policy.data.combined(with: value) }
-        case .agent(_, _, let kits):
+            for value in scope.valuePolicies.values {
+                policy.data = policy.data.combined(with: value)
+            }
+        case let .agent(_, _, kits):
             for id in kits ?? [] {
                 for tool in toolKits[id]?.tools ?? [] {
                     references += ([tool.request.url, tool.request.body ?? ""] + tool.request.headers.map(\.value))
                         .flatMap { Template.references(in: $0) }
                 }
             }
-        case .useTool(let kitID, let toolName, _):
+        case let .useTool(kitID, toolName, _):
             if let tool = toolKits[kitID]?.tools.first(where: { $0.name == toolName }) {
                 references += ([tool.request.url, tool.request.body ?? ""] + tool.request.headers.map(\.value))
                     .flatMap { Template.references(in: $0) }
             }
         default: break
         }
-        for reference in references { policy.data = policy.data.combined(with: scope.dataPolicy(for: reference)) }
+        for reference in references {
+            policy.data = policy.data.combined(with: scope.dataPolicy(for: reference))
+        }
         let history = await scope.resources.historyPolicy(step.context, models: [step.model, step.fallback].compactMap { $0 })
         policy.data = policy.data.combined(with: history)
         return policy
@@ -612,45 +779,54 @@ public actor WorkflowExecutor {
         if case RelayError.writeNotAllowed = error { throw error }
         if case RelayError.limitExceeded = error { throw error }
         if let tool = error as? LanguageModelSession.ToolCallError { try rethrowCancellation(tool.underlyingError) }
-        if case RelayError.operationFailed(_, let failure) = error { try rethrowCancellation(failure.underlyingError) }
+        if case let RelayError.operationFailed(_, failure) = error { try rethrowCancellation(failure.underlyingError) }
     }
 
     private static func uncertain(_ error: any Error) -> Bool {
-        if case RelayError.operationFailed(_, let failure) = error { return failure.info.outcomeUncertain }
+        if case let RelayError.operationFailed(_, failure) = error { return failure.info.outcomeUncertain }
         if let tool = error as? LanguageModelSession.ToolCallError { return uncertain(tool.underlyingError) }
         return false
     }
 
     private static func flatten(_ step: Step) -> [Step] {
         switch step.kind {
-        case .ifEquals(_, _, let then, let otherwise): [step] + (then + otherwise).flatMap(flatten)
-        case .switchOn(_, let cases, let otherwise): [step] + (cases.flatMap(\.steps) + otherwise).flatMap(flatten)
-        case .parallel(let steps): [step] + steps.flatMap(flatten)
+        case let .ifEquals(_, _, then, otherwise): [step] + (then + otherwise).flatMap(flatten)
+        case let .switchOn(_, cases, otherwise): [step] + (cases.flatMap(\.steps) + otherwise).flatMap(flatten)
+        case let .parallel(steps): [step] + steps.flatMap(flatten)
         default: [step]
         }
     }
 
     private static func prompt(for kind: Step.Kind, source: Value, resolve: (String) -> Value?) -> String {
         let instruction: String = switch kind {
-        case .prompt(let instruction), .extract(let instruction, _), .classify(let instruction, _),
-             .agent(let instruction, _, _): instruction
+        case let .prompt(instruction), let .extract(instruction, _), let .classify(instruction, _),
+             let .agent(instruction, _, _): instruction
         default: ""
         }
         let rendered = Template.render(instruction, resolve, text: \.modelText)
+
         // The source is data, clearly separated from the instruction. Lists
         // and fields reach the model as JSON.
         return instruction.contains("{{") ? rendered : "\(rendered)\n\nInput:\n\(source.modelText)"
     }
 
-    private func decide(_ questions: [Question], about text: String, model id: ModelID,
-                        step: Step, scope: Scope) async throws -> Value {
+    private func decide(
+        _ questions: [Question],
+        about text: String,
+        model id: ModelID,
+        step: Step,
+        scope: Scope
+    ) async throws -> Value {
         try catalog.check(id, policy: scope.policy, step: step.name)
+
         if catalog.isDecision(id) {
             if case .conversation = step.context {
                 throw RelayError.invalidContext(step: step.name, reason: "decision-only models have no conversation; use handoff")
             }
+
             let resources = scope.resources
             try scope.control.beginModel(id, step: step.name)
+
             do {
                 let result = try await withTimeout(stepTimeout) {
                     guard let decisions = try await resources.decisionModel(id, catalog: self.catalog) else { throw RelayError.unknownModel(id) }
@@ -664,6 +840,7 @@ public actor WorkflowExecutor {
                 throw error
             }
         }
+
         return try await withSession(model: id, tools: [], step: step, scope: scope) { session in
             Answer.value(try await DecisionByLanguageModel.decide(questions, about: text, session: session))
         }
@@ -674,6 +851,7 @@ public actor WorkflowExecutor {
         try policy.checkNetwork(step: step)
         try policy.checkTool(changesSomething: false, step: step)
         guard let toolServers else { throw RelayError.stepFailed(step: step, reason: "tool servers can't be reached here") }
+
         do {
             return try await withTimeout(stepTimeout) { try await toolServers.connect(to: kit) }
         } catch is CancellationError {
@@ -694,28 +872,43 @@ public actor WorkflowExecutor {
     }
 
     /// Shows the image and the instruction to a model that can see images.
-    private func read(_ image: ImageValue, instruction: String, model id: ModelID,
-                      step: Step, scope: Scope) async throws -> Value {
+    private func read(
+        _ image: ImageValue,
+        instruction: String,
+        model id: ModelID,
+        step: Step,
+        scope: Scope
+    ) async throws -> Value {
         try catalog.check(id, policy: scope.policy, step: step.name)
         if catalog.isDecision(id) { throw InvalidOutput(reason: "\(id) answers questions; it can't read images") }
         guard catalog.supportsImages(id) else {
             throw InvalidOutput(reason: "\(id) can't read images. Choose a model that can see them")
         }
+
         return try await withSession(model: id, tools: [], step: step, scope: scope) { session in
             guard let picture = ImageCoding.picture(from: image.data) else { throw InvalidOutput(reason: "The image couldn't be opened") }
             return .text(try await session.respond { instruction; Attachment(picture) }.content)
         }
     }
 
-    private func generate(_ kind: Step.Kind, prompt: String, model id: ModelID,
-                          tools: [any Tool] = [], step: Step, scope: Scope) async throws -> Value {
+    private func generate(
+        _ kind: Step.Kind,
+        prompt: String,
+        model id: ModelID,
+        tools: [any Tool] = [],
+        step: Step,
+        scope: Scope
+    ) async throws -> Value {
         try catalog.check(id, policy: scope.policy, step: step.name)
         if catalog.isDecision(id) {
-            guard case .classify(let instruction, let labels) = kind else {
+            guard case let .classify(instruction, labels) = kind else {
                 throw InvalidOutput(reason: "\(id) answers questions; it can't write text. Use it in Decide or Classify")
             }
-            let question = Question("label", instruction.isEmpty ? "Which label fits?" : instruction,
-                                    .choice(labels.map { Question.Option($0) }))
+            let question = Question(
+                "label",
+                instruction.isEmpty ? "Which label fits?" : instruction,
+                .choice(labels.map { Question.Option($0) })
+            )
             let input = prompt.components(separatedBy: "\n\nInput:\n").last ?? prompt
             let value = try await decide([question], about: input, model: id, step: step, scope: scope)
             guard let label = value["label"]?.textValue, labels.contains(label) else { throw InvalidOutput(reason: "Expected one of \(labels)") }
@@ -726,17 +919,30 @@ public actor WorkflowExecutor {
         }
     }
 
-    private func withSession(model id: ModelID, tools: [any Tool], step: Step, scope: Scope,
-                             operation: @escaping @Sendable (LanguageModelSession) async throws -> Value) async throws -> Value {
+    private func withSession(
+        model id: ModelID,
+        tools: [any Tool],
+        step: Step,
+        scope: Scope,
+        operation: @escaping @Sendable (LanguageModelSession) async throws -> Value
+    ) async throws -> Value {
         let resources = scope.resources
         let catalog = self.catalog
         try scope.control.beginModel(id, step: step.name)
+
         let work: @Sendable () async throws -> Value = {
             try Task.checkCancellation()
             let backend = try await resources.model(id, catalog: catalog)
             try Task.checkCancellation()
-            let conversation = try await resources.acquire(step.context, model: id, backend: backend, tools: tools,
-                                                           data: scope.policy.data, step: step.name)
+            let conversation = try await resources.acquire(
+                step.context,
+                model: id,
+                backend: backend,
+                tools: tools,
+                data: scope.policy.data,
+                step: step.name
+            )
+
             do {
                 try Task.checkCancellation()
                 let value = try await operation(conversation.session)
@@ -763,10 +969,10 @@ public actor WorkflowExecutor {
 
     private static func respond(_ kind: Step.Kind, prompt: String, session: LanguageModelSession, hasTools: Bool) async throws -> Value {
         switch kind {
-        case .extract(_, let fields):
+        case let .extract(_, fields):
             let schema = try SchemaBuilder.object(named: "Result", fields: fields)
             return Value(try await session.respond(to: prompt, schema: schema).content)
-        case .classify(_, let labels):
+        case let .classify(_, labels):
             let schema = try SchemaBuilder.label(from: labels)
             let raw = Value(try await session.respond(to: prompt, schema: schema).content).textValue
             // Models may quote or pad the label; anything outside the list is
@@ -781,7 +987,9 @@ public actor WorkflowExecutor {
                 // Native streaming providers own the complete tool loop.
                 // In particular Anthropic's non-streaming API is one round.
                 var text: String?
-                for try await snapshot in session.streamResponse(to: prompt) { text = snapshot.content }
+                for try await snapshot in session.streamResponse(to: prompt) {
+                    text = snapshot.content
+                }
                 try Task.checkCancellation()
                 guard let text else { throw InvalidOutput(reason: "The model returned no answer") }
                 return .text(text)
@@ -796,45 +1004,94 @@ extension WorkflowExecutor {
     /// ModelRelay stores no files. Keep `workflow.id` and `revision` stable for
     /// resume, and change the revision when executable dependencies change.
     /// A checkpoint is saved BEFORE every top-level step and AFTER it finishes.
-    public func start(_ workflow: Workflow, input: Value, revision: String,
-                      policy: WorkflowExecutionPolicy = .unrestricted, store: any WorkflowExecutionCheckpointStore,
-                      limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionOutcome {
-        try await startObserved(workflow, input: input, revision: revision, policy: policy, store: store,
-                                limits: limits, onStep: nil, onEvent: nil)
+    public func start(
+        _ workflow: Workflow,
+        input: Value,
+        revision: String,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) async throws -> WorkflowExecutionOutcome {
+        try await startObserved(
+            workflow,
+            input: input,
+            revision: revision,
+            policy: policy,
+            store: store,
+            limits: limits,
+            onStep: nil,
+            onEvent: nil
+        )
     }
 
     /// Streams a recoverable start; the result may pause for approval.
-    public nonisolated func startStream(_ workflow: Workflow, input: Value, revision: String,
-                                        policy: WorkflowExecutionPolicy = .unrestricted, store: any WorkflowExecutionCheckpointStore,
-                                        limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
+    public nonisolated func startStream(
+        _ workflow: Workflow,
+        input: Value,
+        revision: String,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
         WorkflowExecutionStream { onStep, onEvent in
-            try await self.startObserved(workflow, input: input, revision: revision, policy: policy, store: store,
-                                         limits: limits, onStep: onStep, onEvent: onEvent)
+            try await self.startObserved(
+                workflow,
+                input: input,
+                revision: revision,
+                policy: policy,
+                store: store,
+                limits: limits,
+                onStep: onStep,
+                onEvent: onEvent
+            )
         }
     }
 
-    private func startObserved(_ workflow: Workflow, input: Value, revision: String,
-                               policy: WorkflowExecutionPolicy, store: any WorkflowExecutionCheckpointStore,
-                               limits: WorkflowExecutionLimits, onStep: (@Sendable (StepRecord) -> Void)?,
-                               onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionOutcome {
+    private func startObserved(
+        _ workflow: Workflow,
+        input: Value,
+        revision: String,
+        policy: WorkflowExecutionPolicy,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits,
+        onStep: (@Sendable (StepRecord) -> Void)?,
+        onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?
+    ) async throws -> WorkflowExecutionOutcome {
         let definition = try recoveryDefinition(workflow, revision: revision)
         let policy = self.policy.combined(with: policy)
         try self.limits.validate(); try limits.validate()
+
         let control = ExecutionControl(workflowID: workflow.id, limits: self.limits.narrowed(by: limits), observer: onEvent)
         defer { control.finish() }
+
         let resources = ExecutionResources()
         let scope = Scope(input: input, policy: policy, resources: resources, control: control, observer: onStep)
-        let checkpoint = WorkflowExecutionCheckpoint(workflow: workflow, revision: revision, definition: definition,
-            policy: policy, limits: control.limits, executionID: control.executionID,
-            state: scope.saved(conversations: [], duration: .zero))
+        let checkpoint = WorkflowExecutionCheckpoint(
+            workflow: workflow,
+            revision: revision,
+            definition: definition,
+            policy: policy,
+            limits: control.limits,
+            executionID: control.executionID,
+            state: scope.saved(conversations: [], duration: .zero)
+        )
+
         try Task.checkCancellation()
         control.emit(.executionStarted)
+
         do {
             return try await control.withDeadline {
                 try await store.save(checkpoint, replacing: nil)
                 control.emit(.checkpointSaved, generation: checkpoint.generation)
-                return try await self.advance(workflow, checkpoint: checkpoint, approval: nil, policy: policy,
-                                              store: store, control: control, onStep: onStep)
+                return try await self.advance(
+                    workflow,
+                    checkpoint: checkpoint,
+                    approval: nil,
+                    policy: policy,
+                    store: store,
+                    control: control,
+                    onStep: onStep
+                )
             }
         } catch {
             control.emit(error is CancellationError ? .executionCancelled : .executionFailed, category: failureCategory(error))
@@ -846,45 +1103,94 @@ extension WorkflowExecutor {
     /// lazily and restores native history only to the same model ID. An in-flight
     /// checkpoint is ambiguous, even after an error/cancellation: never retry it
     /// automatically. Approval applies only to this checkpoint's current gate.
-    public func resume(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
-                       approval: ApprovalDecision? = nil, policy: WorkflowExecutionPolicy = .unrestricted,
-                       store: any WorkflowExecutionCheckpointStore,
-                       limits: WorkflowExecutionLimits = .unlimited) async throws -> WorkflowExecutionOutcome {
-        try await resumeObserved(workflow, from: checkpoint, revision: revision, approval: approval, policy: policy,
-                                 store: store, limits: limits, onStep: nil, onEvent: nil)
+    public func resume(
+        _ workflow: Workflow,
+        from checkpoint: WorkflowExecutionCheckpoint,
+        revision: String,
+        approval: ApprovalDecision? = nil,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) async throws -> WorkflowExecutionOutcome {
+        try await resumeObserved(
+            workflow,
+            from: checkpoint,
+            revision: revision,
+            approval: approval,
+            policy: policy,
+            store: store,
+            limits: limits,
+            onStep: nil,
+            onEvent: nil
+        )
     }
 
     /// Streams a resume without replaying confirmed step records.
-    public nonisolated func resumeStream(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
-                                         approval: ApprovalDecision? = nil, policy: WorkflowExecutionPolicy = .unrestricted,
-                                         store: any WorkflowExecutionCheckpointStore,
-                                         limits: WorkflowExecutionLimits = .unlimited) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
+    public nonisolated func resumeStream(
+        _ workflow: Workflow,
+        from checkpoint: WorkflowExecutionCheckpoint,
+        revision: String,
+        approval: ApprovalDecision? = nil,
+        policy: WorkflowExecutionPolicy = .unrestricted,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits = .unlimited
+    ) -> WorkflowExecutionStream<WorkflowExecutionOutcome> {
         WorkflowExecutionStream { onStep, onEvent in
-            try await self.resumeObserved(workflow, from: checkpoint, revision: revision, approval: approval, policy: policy,
-                                          store: store, limits: limits, onStep: onStep, onEvent: onEvent)
+            try await self.resumeObserved(
+                workflow,
+                from: checkpoint,
+                revision: revision,
+                approval: approval,
+                policy: policy,
+                store: store,
+                limits: limits,
+                onStep: onStep,
+                onEvent: onEvent
+            )
         }
     }
 
-    private func resumeObserved(_ workflow: Workflow, from checkpoint: WorkflowExecutionCheckpoint, revision: String,
-                                approval: ApprovalDecision?, policy: WorkflowExecutionPolicy,
-                                store: any WorkflowExecutionCheckpointStore, limits: WorkflowExecutionLimits,
-                                onStep: (@Sendable (StepRecord) -> Void)?,
-                                onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?) async throws -> WorkflowExecutionOutcome {
+    private func resumeObserved(
+        _ workflow: Workflow,
+        from checkpoint: WorkflowExecutionCheckpoint,
+        revision: String,
+        approval: ApprovalDecision?,
+        policy: WorkflowExecutionPolicy,
+        store: any WorkflowExecutionCheckpointStore,
+        limits: WorkflowExecutionLimits,
+        onStep: (@Sendable (StepRecord) -> Void)?,
+        onEvent: (@Sendable (WorkflowExecutionEvent) -> Void)?
+    ) async throws -> WorkflowExecutionOutcome {
         try validate(checkpoint, workflow: workflow, revision: revision)
         if checkpoint.status == .running { throw RecoveryError.interrupted(step: workflow.steps[checkpoint.nextStep].name) }
         if approval != nil, checkpoint.status != .awaitingApproval {
             throw RecoveryError.invalidCheckpoint("there is no pending approval")
         }
         try self.limits.validate(); try limits.validate(); try checkpoint.limits.validate()
-        let control = ExecutionControl(workflowID: workflow.id, executionID: checkpoint.executionID,
+
+        let control = ExecutionControl(
+            workflowID: workflow.id,
+            executionID: checkpoint.executionID,
             limits: checkpoint.limits.narrowed(by: self.limits).narrowed(by: limits),
-            usage: checkpoint.usage, duration: checkpoint.state.duration, observer: onEvent)
+            usage: checkpoint.usage,
+            duration: checkpoint.state.duration,
+            observer: onEvent
+        )
         defer { control.finish() }
         control.emit(.executionResumed)
+
         let operation: @Sendable () async throws -> WorkflowExecutionOutcome = {
-            try await self.advance(workflow, checkpoint: checkpoint, approval: approval,
-                policy: self.policy.combined(with: policy), store: store, control: control, onStep: onStep)
+            try await self.advance(
+                workflow,
+                checkpoint: checkpoint,
+                approval: approval,
+                policy: self.policy.combined(with: policy),
+                store: store,
+                control: control,
+                onStep: onStep
+            )
         }
+
         do {
             // Reading terminal/pending state or rejecting does not perform work.
             if checkpoint.status == .completed || checkpoint.status == .rejected ||
@@ -902,19 +1208,26 @@ extension WorkflowExecutor {
     /// results/native transcript cannot be reconstructed from one value.
     /// The host must first stop/fence the original worker; a running checkpoint
     /// alone does not establish that the worker has died.
-    public func confirmCompletion(_ checkpoint: WorkflowExecutionCheckpoint, in workflow: Workflow, revision: String,
-                                  value: Value, dataAccess: WorkflowExecutionPolicy.DataAccess = .unrestricted,
-                                  elapsed: Duration? = nil,
-                                  store: any WorkflowExecutionCheckpointStore) async throws -> WorkflowExecutionCheckpoint {
+    public func confirmCompletion(
+        _ checkpoint: WorkflowExecutionCheckpoint,
+        in workflow: Workflow,
+        revision: String,
+        value: Value,
+        dataAccess: WorkflowExecutionPolicy.DataAccess = .unrestricted,
+        elapsed: Duration? = nil,
+        store: any WorkflowExecutionCheckpointStore
+    ) async throws -> WorkflowExecutionCheckpoint {
         try validate(checkpoint, workflow: workflow, revision: revision)
         guard checkpoint.status == .running else {
             throw RecoveryError.invalidCheckpoint("only an interrupted step can be reconciled")
         }
+
         let step = workflow.steps[checkpoint.nextStep]
         switch step.kind {
         case .request, .useTool, .custom, .template: break
         default: throw RecoveryError.unsupported("blocks and model steps require reconciliation outside this run")
         }
+
         let resources = ExecutionResources(conversations: checkpoint.state.conversations)
         let policy = checkpoint.policy.combined(with: self.policy)
         try self.limits.validate(); try checkpoint.limits.validate()
@@ -924,8 +1237,14 @@ extension WorkflowExecutor {
             throw RecoveryError.unsupported("reconciling a duration-limited execution requires the interrupted attempt's elapsed duration")
         }
         let duration = checkpoint.state.duration + (elapsed ?? .zero)
-        let control = ExecutionControl(workflowID: workflow.id, executionID: checkpoint.executionID,
-            limits: limits, usage: checkpoint.usage, duration: duration, observer: nil)
+        let control = ExecutionControl(
+            workflowID: workflow.id,
+            executionID: checkpoint.executionID,
+            limits: limits,
+            usage: checkpoint.usage,
+            duration: duration,
+            observer: nil
+        )
         switch step.kind {
         case .request, .useTool: control.accountReconciledTool()
         default: break
@@ -961,8 +1280,9 @@ extension WorkflowExecutor {
     private func validate(_ checkpoint: WorkflowExecutionCheckpoint, workflow: Workflow, revision: String) throws {
         let definition = try recoveryDefinition(workflow, revision: revision)
         guard checkpoint.schemaVersion == 2, checkpoint.generation >= 0,
-              (0...workflow.steps.count).contains(checkpoint.nextStep),
-              checkpoint.state.duration >= .zero, checkpoint.usage.modelCalls >= 0, checkpoint.usage.toolCalls >= 0 else {
+              (0 ... workflow.steps.count).contains(checkpoint.nextStep),
+              checkpoint.state.duration >= .zero, checkpoint.usage.modelCalls >= 0, checkpoint.usage.toolCalls >= 0
+        else {
             throw RecoveryError.invalidCheckpoint("unsupported version or invalid position")
         }
         guard checkpoint.revision == revision else { throw RecoveryError.revisionMismatch }
@@ -987,30 +1307,44 @@ extension WorkflowExecutor {
         guard Set(lanes).count == lanes.count else { throw RecoveryError.invalidCheckpoint("duplicate conversation history") }
     }
 
-    private func save(_ next: WorkflowExecutionCheckpoint, after previous: WorkflowExecutionCheckpoint,
-                      store: any WorkflowExecutionCheckpointStore, control: ExecutionControl? = nil) async throws -> WorkflowExecutionCheckpoint {
+    private func save(
+        _ next: WorkflowExecutionCheckpoint,
+        after previous: WorkflowExecutionCheckpoint,
+        store: any WorkflowExecutionCheckpointStore,
+        control: ExecutionControl? = nil
+    ) async throws -> WorkflowExecutionCheckpoint {
         guard previous.generation < Int.max else { throw RecoveryError.invalidCheckpoint("generation overflow") }
         var next = next
         next.generation = previous.generation + 1
         if let control { next.state.duration = max(next.state.duration, control.duration) }
+
         try await store.save(next, replacing: previous.generation)
         control?.emit(.checkpointSaved, generation: next.generation)
+
         return next
     }
 
-    private func advance(_ workflow: Workflow, checkpoint initial: WorkflowExecutionCheckpoint, approval: ApprovalDecision?,
-                         policy: WorkflowExecutionPolicy, store: any WorkflowExecutionCheckpointStore,
-                         control: ExecutionControl,
-                         onStep: (@Sendable (StepRecord) -> Void)?) async throws -> WorkflowExecutionOutcome {
+    private func advance(
+        _ workflow: Workflow,
+        checkpoint initial: WorkflowExecutionCheckpoint,
+        approval: ApprovalDecision?,
+        policy: WorkflowExecutionPolicy,
+        store: any WorkflowExecutionCheckpointStore,
+        control: ExecutionControl,
+        onStep: (@Sendable (StepRecord) -> Void)?
+    ) async throws -> WorkflowExecutionOutcome {
         var checkpoint = initial
         checkpoint.policy = checkpoint.policy.combined(with: policy)
         checkpoint.limits = control.limits
+
         if checkpoint.status == .completed {
             let report = try Self.report(workflow, checkpoint: checkpoint)
             control.emit(.executionCompleted)
             return .completed(report)
         }
+
         if checkpoint.status == .rejected { control.emit(.approvalRejected, step: checkpoint.step); return .rejected(checkpoint) }
+
         if checkpoint.status == .awaitingApproval {
             guard let approval else {
                 if checkpoint.policy != initial.policy || checkpoint.limits != initial.limits {
@@ -1019,6 +1353,7 @@ extension WorkflowExecutor {
                 control.emit(.approvalRequired, step: checkpoint.step)
                 return .awaitingApproval(checkpoint)
             }
+
             if approval == .reject {
                 var next = checkpoint
                 next.status = .rejected
@@ -1031,6 +1366,7 @@ extension WorkflowExecutor {
         let resources = ExecutionResources(conversations: checkpoint.state.conversations)
         var scope = Scope(saved: checkpoint.state, policy: checkpoint.policy, resources: resources, control: control, observer: onStep)
         var approved = checkpoint.status == .awaitingApproval && approval == .approve
+
         do {
             while checkpoint.nextStep < workflow.steps.count {
                 try control.check()
@@ -1044,15 +1380,18 @@ extension WorkflowExecutor {
                     await resources.finish()
                     return .awaitingApproval(checkpoint)
                 }
+
                 approved = false
                 var running = checkpoint
                 running.status = .running
                 running.approval = nil
                 checkpoint = try await save(running, after: checkpoint, store: store, control: control)
+
                 // The claim above MUST be committed before any user/provider code.
                 try Task.checkCancellation()
                 let value = try await runRecordingFailure(step, scope: &scope)
                 scope.accept(value, for: step)
+
                 var next = checkpoint
                 next.nextStep += 1
                 next.step = workflow.steps.dropFirst(next.nextStep).first?.name
@@ -1060,12 +1399,15 @@ extension WorkflowExecutor {
                 next.state = scope.saved(conversations: await resources.snapshot(), duration: control.duration)
                 checkpoint = try await save(next, after: checkpoint, store: store, control: control)
             }
+
             if checkpoint.status != .completed {
                 var next = checkpoint
                 next.status = .completed
                 checkpoint = try await save(next, after: checkpoint, store: store, control: control)
             }
+
             await resources.finish()
+
             let report = try Self.report(workflow, checkpoint: checkpoint)
             control.emit(.executionCompleted)
             return .completed(report)
@@ -1084,17 +1426,27 @@ extension WorkflowExecutor {
             guard let value = state.results[name] else { throw RelayError.unknownReference(name, step: "Output") }
             output = value
         } else { output = state.previous }
-        return WorkflowExecutionReport(output: output,
-                  records: state.records, duration: state.duration,
-                  outputDataAccess: (workflow.output.flatMap { state.valuePolicies[$0] } ?? state.outputData).combined(with: checkpoint.policy.data),
-                  executionID: checkpoint.executionID, workflowID: workflow.id, usage: state.usage)
+
+        return WorkflowExecutionReport(
+            output: output,
+            records: state.records,
+            duration: state.duration,
+            outputDataAccess: (workflow.output.flatMap { state.valuePolicies[$0] } ?? state.outputData).combined(with: checkpoint.policy.data),
+            executionID: checkpoint.executionID,
+            workflowID: workflow.id,
+            usage: state.usage
+        )
     }
 }
 
 private extension WorkflowExecutor.Scope {
-    init(saved: CheckpointValues, policy: WorkflowExecutionPolicy, resources: ExecutionResources,
-         control: ExecutionControl,
-         observer: (@Sendable (StepRecord) -> Void)?) {
+    init(
+        saved: CheckpointValues,
+        policy: WorkflowExecutionPolicy,
+        resources: ExecutionResources,
+        control: ExecutionControl,
+        observer: (@Sendable (StepRecord) -> Void)?
+    ) {
         input = saved.input
         results = saved.results
         valuePolicies = saved.valuePolicies
@@ -1110,9 +1462,19 @@ private extension WorkflowExecutor.Scope {
     }
 
     func saved(conversations: [CheckpointConversation], duration: Duration) -> CheckpointValues {
-        CheckpointValues(input: input, results: results, valuePolicies: valuePolicies, previous: previous,
-                         previousData: previousData, outputData: outputData, inputData: inputData,
-                         records: records, conversations: conversations, duration: duration, usage: control.usage)
+        CheckpointValues(
+            input: input,
+            results: results,
+            valuePolicies: valuePolicies,
+            previous: previous,
+            previousData: previousData,
+            outputData: outputData,
+            inputData: inputData,
+            records: records,
+            conversations: conversations,
+            duration: duration,
+            usage: control.usage
+        )
     }
 
     mutating func accept(_ value: Value, for step: Step) {
@@ -1157,7 +1519,7 @@ enum ServerArguments {
             case "false", "no", "0": return .bool(false)
             default: return .text(text)
             }
-        case .list(let item):
+        case let .list(item):
             if let data = text.data(using: .utf8), let parsed = Value(json: data), case .list = parsed { return parsed }
             return .list(text.split(whereSeparator: \.isNewline).map { value(String($0).trimmingCharacters(in: .whitespaces), as: item) })
         case .text, .choice:

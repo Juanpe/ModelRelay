@@ -33,13 +33,13 @@ public struct WorkflowOperationFailure: Error, Sendable, Equatable, CustomString
 
 private func deepestCause(_ error: any Error) -> any Error {
     if let tool = error as? LanguageModelSession.ToolCallError { return deepestCause(tool.underlyingError) }
-    if case RelayError.operationFailed(_, let failure) = error { return failure.rootCause }
+    if case let RelayError.operationFailed(_, failure) = error { return failure.rootCause }
     return error
 }
 
 private func uncertainOutcome(_ error: any Error) -> Bool {
     if let tool = error as? LanguageModelSession.ToolCallError { return uncertainOutcome(tool.underlyingError) }
-    if case RelayError.operationFailed(_, let failure) = error { return failure.info.outcomeUncertain }
+    if case let RelayError.operationFailed(_, failure) = error { return failure.info.outcomeUncertain }
     return false
 }
 
@@ -60,7 +60,7 @@ public struct HTTPResponseFailure: Error, Sendable, CustomStringConvertible, Wor
 
 func failureCategory(_ error: any Error) -> WorkflowFailureCategory {
     if let tool = error as? LanguageModelSession.ToolCallError { return failureCategory(tool.underlyingError) }
-    if case RelayError.operationFailed(_, let failure) = error { return failure.info.category }
+    if case let RelayError.operationFailed(_, failure) = error { return failure.info.category }
     if let value = error as? any WorkflowFailureClassifiable { return value.workflowFailureCategory }
     if error is WorkflowValidationError { return .validation }
     if error is OperationTimeout { return .timeout }
@@ -84,11 +84,14 @@ func failureCategory(_ error: any Error) -> WorkflowFailureCategory {
 }
 
 func operationFailure(step: String, error: any Error, uncertain: Bool = false, secrets: [String] = []) -> RelayError {
-    let existing: WorkflowOperationFailure?
-    if case RelayError.operationFailed(_, let value) = error { existing = value } else { existing = nil }
+    let existing: WorkflowOperationFailure? = if case let RelayError.operationFailed(_, value) = error { value } else { nil }
     let message = RequestBuilder.redact(failureReason(error), secrets: secrets)
     return .operationFailed(step: step, failure: WorkflowOperationFailure(
-        info: .init(category: failureCategory(error), message: message,
-                    outcomeUncertain: uncertain || uncertainOutcome(error)),
-        underlyingError: existing?.underlyingError ?? error))
+        info: .init(
+            category: failureCategory(error),
+            message: message,
+            outcomeUncertain: uncertain || uncertainOutcome(error)
+        ),
+        underlyingError: existing?.underlyingError ?? error
+    ))
 }

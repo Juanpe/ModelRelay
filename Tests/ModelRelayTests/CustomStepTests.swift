@@ -89,7 +89,9 @@ import Testing
             Step.custom("slow") { _ in started.withLock { $0 = true }; try await Task.sleep(for: .seconds(60)); return .null }
         }
         let task = Task { try await WorkflowExecutor().run(workflow, input: .null) }
-        while !started.withLock({ $0 }) { await Task.yield() }
+        while !started.withLock({ $0 }) {
+            await Task.yield()
+        }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }

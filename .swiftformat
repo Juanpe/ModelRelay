@@ -1,0 +1,19 @@
+# SwiftFormat owns layout; SwiftLint owns code-quality checks.
+--minversion 0.55.5
+--swiftversion 6.4
+--languagemode 6
+
+--disable consistentSwitchCaseSpacing,extensionAccessControl,hoistAwait,hoistTry,modifierOrder,opaqueGenericParameters,preferForLoop,preferKeyPath,redundantFileprivate,redundantRawValues,redundantReturn,redundantSelf,redundantType,redundantVoidReturnType,trailingCommas,unusedArguments
+
+--indent 4
+--extensionacl on-declarations
+--ifdef outdent
+--importgrouping testable-last
+--indentstrings true
+--self init-only
+--wrapparameters before-first
+--wraparguments before-first
+--xcodeindentation true
+
+--exclude **.pb.swift,**.generated.swift,**/.git,**/.swiftpm,**/.build,**/.tools,**/DerivedData,**/SourcePackages,**/RecoveredSources,**/Pods,**/vendor
+--symlinks ignore

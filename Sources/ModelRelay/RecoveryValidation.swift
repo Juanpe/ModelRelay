@@ -11,7 +11,9 @@ extension Workflow {
                         throw RecoveryError.unsupported("approval gates must be on top-level steps; gate the containing block")
                     }
                 }
-                for branch in step.recoveryChildren { try visit(branch, nested: true) }
+                for branch in step.recoveryChildren {
+                    try visit(branch, nested: true)
+                }
             }
         }
         try visit(steps, nested: false)
@@ -39,18 +41,24 @@ extension Workflow {
                 case .custom:
                     paths.append(location)
                     copy.kind = .template("")
-                case .parallel(let children):
+                case let .parallel(children):
                     copy.kind = .parallel(try prepare(children, path: location))
-                case .ifEquals(let ref, let value, let yes, let no):
-                    copy.kind = .ifEquals(reference: ref, value: value,
+                case let .ifEquals(ref, value, yes, no):
+                    copy.kind = .ifEquals(
+                        reference: ref,
+                        value: value,
                         then: try prepare(yes, path: location + "/then"),
-                        otherwise: try prepare(no, path: location + "/otherwise"))
-                case .switchOn(let ref, let cases, let otherwise):
+                        otherwise: try prepare(no, path: location + "/otherwise")
+                    )
+                case let .switchOn(ref, cases, otherwise):
                     let cases = try cases.enumerated().map { i, item in
                         SwitchCase(item.value, steps: try prepare(item.steps, path: "\(location)/case/\(i)"))
                     }
-                    copy.kind = .switchOn(reference: ref, cases: cases,
-                        otherwise: try prepare(otherwise, path: location + "/otherwise"))
+                    copy.kind = .switchOn(
+                        reference: ref,
+                        cases: cases,
+                        otherwise: try prepare(otherwise, path: location + "/otherwise")
+                    )
                 default: break
                 }
                 return copy
@@ -68,9 +76,9 @@ extension Workflow {
 private extension Step {
     var recoveryChildren: [[Step]] {
         switch kind {
-        case .parallel(let children): [children]
-        case .ifEquals(_, _, let yes, let no): [yes, no]
-        case .switchOn(_, let cases, let otherwise): cases.map(\.steps) + [otherwise]
+        case let .parallel(children): [children]
+        case let .ifEquals(_, _, yes, no): [yes, no]
+        case let .switchOn(_, cases, otherwise): cases.map(\.steps) + [otherwise]
         default: []
         }
     }

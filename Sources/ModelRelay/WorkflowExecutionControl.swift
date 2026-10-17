@@ -10,26 +10,37 @@ public struct WorkflowExecutionLimits: Codable, Sendable, Hashable {
     public var maxToolCalls: Int?
     /// Concurrent leaf steps; blocks do not hold slots, preventing nested deadlock.
     public var maxConcurrentSteps: Int?
-    public init(maxDuration: Duration? = nil, maxModelCalls: Int? = nil,
-                maxToolCalls: Int? = nil, maxConcurrentSteps: Int? = nil) {
+    public init(
+        maxDuration: Duration? = nil,
+        maxModelCalls: Int? = nil,
+        maxToolCalls: Int? = nil,
+        maxConcurrentSteps: Int? = nil
+    ) {
         self.maxDuration = maxDuration; self.maxModelCalls = maxModelCalls
         self.maxToolCalls = maxToolCalls; self.maxConcurrentSteps = maxConcurrentSteps
     }
+
     public static let unlimited = Self()
 
     func validate() throws {
         guard maxDuration.map({ $0 >= .zero }) ?? true,
               maxModelCalls.map({ $0 >= 0 }) ?? true, maxToolCalls.map({ $0 >= 0 }) ?? true,
-              maxConcurrentSteps.map({ $0 > 0 }) ?? true else {
+              maxConcurrentSteps.map({ $0 > 0 }) ?? true
+        else {
             throw RelayError.invalidLimits
         }
     }
+
     func narrowed(by other: Self) -> Self {
         func smaller<T: Comparable>(_ a: T?, _ b: T?) -> T? {
-            switch (a, b) { case (.some(let a), .some(let b)): min(a, b); default: a ?? b }
+            switch (a, b) { case let (.some(a), .some(b)): min(a, b); default: a ?? b }
         }
-        return Self(maxDuration: smaller(maxDuration, other.maxDuration), maxModelCalls: smaller(maxModelCalls, other.maxModelCalls),
-                    maxToolCalls: smaller(maxToolCalls, other.maxToolCalls), maxConcurrentSteps: smaller(maxConcurrentSteps, other.maxConcurrentSteps))
+        return Self(
+            maxDuration: smaller(maxDuration, other.maxDuration),
+            maxModelCalls: smaller(maxModelCalls, other.maxModelCalls),
+            maxToolCalls: smaller(maxToolCalls, other.maxToolCalls),
+            maxConcurrentSteps: smaller(maxConcurrentSteps, other.maxConcurrentSteps)
+        )
     }
 }
 
@@ -53,6 +64,7 @@ public struct WorkflowExecutionEvent: Codable, Sendable, Hashable {
         case toolStarted, toolCompleted, toolFailed
         case approvalRequired, approvalRejected, checkpointSaved, limitReached
     }
+
     public let executionID: UUID
     public let workflowID: UUID
     /// Each resume has a fresh invocation ID; sequence is ordered within it.
@@ -80,29 +92,53 @@ final class ExecutionControl: Sendable {
         var sequence = 0
         var observer: (@Sendable (WorkflowExecutionEvent) -> Void)?
     }
+
     private let events: Mutex<Events>
     private let slots: ExecutionSlots
 
-    init(workflowID: UUID, executionID: UUID = UUID(), limits: WorkflowExecutionLimits,
-         usage: WorkflowExecutionUsage = .init(), duration: Duration = .zero,
-         observer: (@Sendable (WorkflowExecutionEvent) -> Void)?) {
+    init(
+        workflowID: UUID,
+        executionID: UUID = UUID(),
+        limits: WorkflowExecutionLimits,
+        usage: WorkflowExecutionUsage = .init(),
+        duration: Duration = .zero,
+        observer: (@Sendable (WorkflowExecutionEvent) -> Void)?
+    ) {
         self.workflowID = workflowID; self.executionID = executionID; self.limits = limits
         priorDuration = duration; usageState = Mutex(usage); events = Mutex(Events(observer: observer))
         slots = ExecutionSlots(limit: limits.maxConcurrentSteps)
     }
+
     var usage: WorkflowExecutionUsage { usageState.withLock { $0 } }
     func accountReconciledTool() { usageState.withLock { if $0.toolCalls < Int.max { $0.toolCalls += 1 } } }
     func finish() { events.withLock { $0.observer = nil } }
     var duration: Duration { priorDuration + (ContinuousClock.now - began) }
 
-    func emit(_ kind: WorkflowExecutionEvent.Kind, step: String? = nil, model: ModelID? = nil, tool: String? = nil,
-              category: WorkflowFailureCategory? = nil, generation: Int? = nil, limit: WorkflowExecutionLimit? = nil) {
+    func emit(
+        _ kind: WorkflowExecutionEvent.Kind,
+        step: String? = nil,
+        model: ModelID? = nil,
+        tool: String? = nil,
+        category: WorkflowFailureCategory? = nil,
+        generation: Int? = nil,
+        limit: WorkflowExecutionLimit? = nil
+    ) {
         events.withLock { events in
             guard let observer = events.observer else { return }
             events.sequence += 1
-            observer(.init(executionID: executionID, workflowID: workflowID, invocationID: invocationID,
-                           sequence: events.sequence, kind: kind, step: step, model: model, tool: tool,
-                           failureCategory: category, checkpointGeneration: generation, limit: limit))
+            observer(.init(
+                executionID: executionID,
+                workflowID: workflowID,
+                invocationID: invocationID,
+                sequence: events.sequence,
+                kind: kind,
+                step: step,
+                model: model,
+                tool: tool,
+                failureCategory: category,
+                checkpointGeneration: generation,
+                limit: limit
+            ))
         }
     }
 
@@ -110,10 +146,12 @@ final class ExecutionControl: Sendable {
         try Task.checkCancellation()
         if let max = limits.maxDuration, duration >= max { try exceeded(.duration) }
     }
+
     private func exceeded(_ limit: WorkflowExecutionLimit) throws -> Never {
         emit(.limitReached, category: .limitExceeded, limit: limit)
         throw RelayError.limitExceeded(limit)
     }
+
     func beginModel(_ model: ModelID, step: String) throws {
         try check()
         let allowed = usageState.withLock { usage in
@@ -124,6 +162,7 @@ final class ExecutionControl: Sendable {
         guard allowed else { try exceeded(.modelCalls) }
         emit(.modelStarted, step: step, model: model)
     }
+
     func beginTool(_ tool: String, step: String) throws {
         try check()
         let allowed = usageState.withLock { usage in
@@ -134,6 +173,7 @@ final class ExecutionControl: Sendable {
         guard allowed else { try exceeded(.toolCalls) }
         emit(.toolStarted, step: step, tool: tool)
     }
+
     func acquire() async throws { try check(); try await slots.acquire() }
     func release() async { await slots.release() }
 
@@ -171,10 +211,12 @@ private actor ExecutionSlots {
             }
         } onCancel: { Task { await self.cancel(id) } }
     }
+
     private func cancel(_ id: UUID) {
         waiting.removeValue(forKey: id)?.resume(throwing: CancellationError())
         queue.removeAll { $0 == id }
     }
+
     func release() {
         guard limit != nil else { return }
         while !queue.isEmpty {

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import ModelRelay
+import Testing
 
 @Suite struct WorkflowBuilderTests {
     @Test func builderPreservesTheExistingTreeAndJSON() throws {
@@ -71,7 +71,7 @@ import ModelRelay
             } else {
                 Step.template("unused", "Long")
             }
-            for index in 0..<2 {
+            for index in 0 ..< 2 {
                 Step.template("item_\(index)", "\(index)")
             }
             switch selected {
@@ -172,9 +172,9 @@ import ModelRelay
             Step.template("no", "No")
         }
         #expect(conditional == Step("route", .ifEquals(reference: "label", value: "yes",
-                                                      then: [.template("yes", "Yes")], otherwise: [.template("no", "No")]), input: "input"))
+                                                       then: [.template("yes", "Yes")], otherwise: [.template("no", "No")]), input: "input"))
         #expect(Step.ifEquals("empty", reference: "label", value: "yes") {}.kind ==
-                .ifEquals(reference: "label", value: "yes", then: [], otherwise: []))
+            .ifEquals(reference: "label", value: "yes", then: [], otherwise: []))
         let cases = [SwitchCase("yes") { Step.template("yes", "Yes") }, SwitchCase("empty") {}]
         let switched = Step.switchOn("switch", reference: "label", cases: cases, input: "input") {
             Step.template("no", "No")

@@ -17,6 +17,7 @@ actor SharedResource<Resource: Sendable> {
             return try await withCheckedThrowingContinuation { continuation in
                 waiters[waiter] = continuation
                 guard producer == nil else { return }
+
                 let id = UUID()
                 generation = id
                 producer = Task {
@@ -33,12 +34,16 @@ actor SharedResource<Resource: Sendable> {
 
     private func complete(_ result: Result<Resource, any Error>, generation id: UUID) {
         guard generation == id else { return }
-        if case .success(let value) = result { cached = value }
+        if case let .success(value) = result { cached = value }
+
         let pending = waiters.values
         waiters.removeAll()
         producer = nil
         generation = nil
-        for continuation in pending { continuation.resume(with: result) }
+
+        for continuation in pending {
+            continuation.resume(with: result)
+        }
     }
 
     private func cancel(_ waiter: UUID) {
@@ -49,8 +54,11 @@ actor SharedResource<Resource: Sendable> {
     func finish() {
         producer?.cancel()
         producer = nil; generation = nil; cached = nil
+
         let pending = waiters.values
         waiters.removeAll()
-        for continuation in pending { continuation.resume(throwing: CancellationError()) }
+        for continuation in pending {
+            continuation.resume(throwing: CancellationError())
+        }
     }
 }

@@ -14,9 +14,12 @@ public struct MCPConnector: ToolServerConnector {
     public var clientName: String
     var session: URLSession
 
-    public init(secrets: (any SecretProvider)? = nil,
-                accessToken: (@Sendable (ToolKit) async throws -> String?)? = nil,
-                clientName: String = "ModelRelay", configuration: URLSessionConfiguration = .ephemeral) {
+    public init(
+        secrets: (any SecretProvider)? = nil,
+        accessToken: (@Sendable (ToolKit) async throws -> String?)? = nil,
+        clientName: String = "ModelRelay",
+        configuration: URLSessionConfiguration = .ephemeral
+    ) {
         self.secrets = secrets
         self.accessToken = accessToken
         self.clientName = clientName
@@ -25,17 +28,21 @@ public struct MCPConnector: ToolServerConnector {
 
     public func connect(to kit: ToolKit) async throws -> any ToolServerConnection {
         guard let server = kit.server, let url = URL(string: server.url),
-              url.scheme == "https" || url.scheme == "http" else {
+              url.scheme == "https" || url.scheme == "http"
+        else {
             throw MCPError.invalidAddress
         }
+
         var headers: [String: String] = [:]
         for header in server.headers {
             headers[header.name] = try await resolveSecrets(in: header.value)
         }
+
         if server.signsIn {
             guard let token = try await accessToken?(kit), !token.isEmpty else { throw MCPError.needsSignIn(challenge: nil) }
             headers["Authorization"] = "Bearer \(token)"
         }
+
         let client = MCPClient(url: url, headers: headers, clientName: clientName, session: session)
         try await client.start()
         return client
@@ -44,15 +51,18 @@ public struct MCPConnector: ToolServerConnector {
     private func resolveSecrets(in text: String) async throws -> String {
         var result = ""
         var rest = Substring(text)
+
         while let open = rest.range(of: "{{secret."), let close = rest[open.upperBound...].range(of: "}}") {
             result += rest[..<open.lowerBound]
-            let name = rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces)
+            let name = rest[open.upperBound ..< close.lowerBound].trimmingCharacters(in: .whitespaces)
             guard let value = try await secrets?.secret(named: name), !value.isEmpty else {
                 throw RelayError.missingSecret(name, step: "")
             }
+
             result += value
             rest = rest[close.upperBound...]
         }
+
         return result + rest
     }
 }
@@ -71,7 +81,7 @@ public enum MCPError: Error, LocalizedError, Equatable, Sendable, WorkflowFailur
     public var workflowFailureCategory: WorkflowFailureCategory {
         switch self {
         case .needsSignIn: .authenticationRequired
-        case .http(let status, _): status == 401 ? .authenticationRequired : status == 403 ? .permissionDenied : .requestRejected
+        case let .http(status, _): status == 401 ? .authenticationRequired : status == 403 ? .permissionDenied : .requestRejected
         case .invalidAddress: .validation
         case .invalidResponse: .invalidOutput
         default: .unknown
@@ -82,10 +92,10 @@ public enum MCPError: Error, LocalizedError, Equatable, Sendable, WorkflowFailur
         switch self {
         case .invalidAddress: "the server address isn't a web address"
         case .needsSignIn: "sign in to this server again"
-        case .http(let status, let message): message.isEmpty ? "the server answered HTTP \(status)" : "HTTP \(status): \(message)"
-        case .server(let message): message
-        case .toolFailed(let message): message
-        case .invalidResponse(let message): "the server's reply couldn't be read (\(message))"
+        case let .http(status, message): message.isEmpty ? "the server answered HTTP \(status)" : "HTTP \(status): \(message)"
+        case let .server(message): message
+        case let .toolFailed(message): message
+        case let .invalidResponse(message): "the server's reply couldn't be read (\(message))"
         }
     }
 }
@@ -124,17 +134,21 @@ public actor MCPClient: ToolServerConnection {
 
     public func tools() async throws -> [ServerTool] {
         if let listed { return listed }
+
         var all: [ServerTool] = []
         var cursor: String?
+
         // A few pages at most; agents can't use hundreds of tools anyway.
-        for _ in 0..<10 {
+        for _ in 0 ..< 10 {
             let result = try await send("tools/list", params: cursor.map { ["cursor": $0] } ?? [:])
             for item in result["tools"] as? [[String: Any]] ?? [] {
                 if let tool = MCPSchema.tool(from: item) { all.append(tool) }
             }
+
             guard let next = result["nextCursor"] as? String, !next.isEmpty else { break }
             cursor = next
         }
+
         listed = all
         return all
     }
@@ -144,8 +158,10 @@ public actor MCPClient: ToolServerConnection {
             "name": tool,
             "arguments": arguments.mapValues(\.jsonObject),
         ])
+
         let value = MCPSchema.value(fromCallResult: result)
         if result["isError"] as? Bool == true { throw MCPError.toolFailed(value.textValue) }
+
         return value
     }
 
@@ -154,17 +170,22 @@ public actor MCPClient: ToolServerConnection {
     private func send(_ method: String, params: [String: Any]) async throws -> [String: Any] {
         let id = nextID
         nextID += 1
+
         let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
         let (data, response) = try await post(message)
+
         if method == "initialize", let header = response.value(forHTTPHeaderField: "Mcp-Session-Id") {
             sessionID = header
         }
+
         guard let reply = try MCPMessages.reply(to: id, in: data, contentType: response.value(forHTTPHeaderField: "Content-Type")) else {
             throw MCPError.invalidResponse("no reply to \(method)")
         }
+
         if let error = reply["error"] as? [String: Any] {
             throw MCPError.server(error["message"] as? String ?? "the server refused \(method)")
         }
+
         return reply["result"] as? [String: Any] ?? [:]
     }
 
@@ -177,26 +198,35 @@ public actor MCPClient: ToolServerConnection {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+
         if let negotiatedVersion { request.setValue(negotiatedVersion, forHTTPHeaderField: "MCP-Protocol-Version") }
         if let sessionID { request.setValue(sessionID, forHTTPHeaderField: "Mcp-Session-Id") }
-        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: message)
         let (data, response): (Data, URLResponse)
+
         do {
             (data, response) = try await session.data(for: request)
         } catch let error as URLError where error.code != .cancelled {
             throw MCPError.server("couldn't reach \(url.host() ?? url.absoluteString): \(error.localizedDescription)")
         }
+
         guard let http = response as? HTTPURLResponse else { throw MCPError.invalidResponse("not HTTP") }
         if http.statusCode == 401 {
             throw MCPError.needsSignIn(challenge: http.value(forHTTPHeaderField: "WWW-Authenticate"))
         }
-        guard (200..<300).contains(http.statusCode) else {
+
+        guard (200 ..< 300).contains(http.statusCode) else {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let message = (object?["error"] as? [String: Any])?["message"] as? String
                 ?? object?["error_description"] as? String ?? object?["message"] as? String ?? ""
             throw MCPError.http(status: http.statusCode, message: message)
         }
+
         return (data, http)
     }
 }
@@ -215,6 +245,7 @@ enum MCPMessages {
             }
             messages = (object as? [Any]) ?? [object]
         }
+
         return messages.compactMap { $0 as? [String: Any] }.first { message in
             (message["id"] as? Int) == id || (message["id"] as? String) == String(id)
         }
@@ -229,6 +260,7 @@ enum MCPMessages {
                     let value = line.dropFirst("data:".count)
                     return value.hasPrefix(" ") ? String(value.dropFirst()) : String(value)
                 }
+
             return data.isEmpty ? nil : data.joined(separator: "\n")
         }
     }
@@ -238,11 +270,13 @@ enum MCPMessages {
 enum MCPSchema {
     static func tool(from item: [String: Any]) -> ServerTool? {
         guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+
         let schema = item["inputSchema"] as? [String: Any] ?? [:]
         let required = schema["required"] as? [String] ?? []
         let properties = schema["properties"] as? [String: Any] ?? [:]
         // Required first, then by name: the order models and forms read.
         let names = properties.keys.sorted { (required.contains($0) ? 0 : 1, $0) < (required.contains($1) ? 0 : 1, $1) }
+
         let parameters = names.map { name -> Field in
             let property = properties[name] as? [String: Any] ?? [:]
             var description = property["description"] as? String
@@ -250,13 +284,19 @@ enum MCPSchema {
             if kind == .text, isStructured(property) {
                 description = [description, "Write it as JSON."].compactMap { $0 }.joined(separator: " ")
             }
+
             return Field(name, kind, description: description)
         }
+
         let annotations = item["annotations"] as? [String: Any] ?? [:]
-        return ServerTool(name: name, title: item["title"] as? String ?? annotations["title"] as? String,
-                          description: item["description"] as? String ?? "", parameters: parameters,
-                          required: required.filter(properties.keys.contains),
-                          changesSomething: annotations["readOnlyHint"] as? Bool != true)
+        return ServerTool(
+            name: name,
+            title: item["title"] as? String ?? annotations["title"] as? String,
+            description: item["description"] as? String ?? "",
+            parameters: parameters,
+            required: required.filter(properties.keys.contains),
+            changesSomething: annotations["readOnlyHint"] as? Bool != true
+        )
     }
 
     private static func type(of property: [String: Any]) -> String? {

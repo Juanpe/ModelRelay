@@ -1,6 +1,6 @@
 # 🗃 Historical SwiftSyntax alignment
 
-[← Experiment](../README.md) · [Current migration guide](../../../Documentation/NativeRuntimeMigration.md)
+[← Experiment](../README.md) · [Integration](../../../Documentation/Integration.md)
 
 > 📣 Superseded. These fixtures are not needed to build ModelRelay.
 

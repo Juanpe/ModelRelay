@@ -6,19 +6,26 @@ import Testing
     private let weather = AgentTool(
         name: "weather", description: "Current weather for a city.",
         parameters: [Field("city", .text)],
-        request: HTTPRequest(url: "https://api.example.com/weather?q={{args.city}}",
-                             headers: [.init("Authorization", "Bearer {{secret.KEY}}")]))
+        request: HTTPRequest(
+            url: "https://api.example.com/weather?q={{args.city}}",
+            headers: [.init("Authorization", "Bearer {{secret.KEY}}")]
+        )
+    )
 
     private let createTask = AgentTool(
         name: "create_task", description: "Create a task.",
         parameters: [Field("title", .text)],
-        request: HTTPRequest(.post, url: "https://api.example.com/tasks", body: #"{"title": "{{args.title}}"}"#))
+        request: HTTPRequest(.post, url: "https://api.example.com/tasks", body: #"{"title": "{{args.title}}"}"#)
+    )
 
     @Test func agentCallsAToolAndAnswersWithItsOutput() async throws {
         let model = ScriptedModel("small", replies: [#"<tool:weather>{"city": "Lisbon"}"#, "It's 21 degrees in Lisbon."])
         let server = FakeServer(json: #"{"temp": 21}"#)
-        let executor = WorkflowExecutor(catalog: .scripted(["small": model]), requests: server,
-                                    secrets: FakeSecrets(values: ["KEY": "k-test"]))
+        let executor = WorkflowExecutor(
+            catalog: .scripted(["small": model]),
+            requests: server,
+            secrets: FakeSecrets(values: ["KEY": "k-test"])
+        )
         let workflow = Workflow(name: "Ask", steps: [
             Step("answer", .agent(instruction: "Answer using the tools.", tools: [weather]), model: "small"),
         ])
@@ -50,8 +57,11 @@ import Testing
         let loop = Array(repeating: Optional(#"<tool:weather>{"city": "Lisbon"}"#), count: 10)
         let model = ScriptedModel("small", replies: loop)
         let server = FakeServer(json: #"{"temp": 21}"#)
-        let executor = WorkflowExecutor(catalog: .scripted(["small": model]), requests: server,
-                                    secrets: FakeSecrets(values: ["KEY": "k"]))
+        let executor = WorkflowExecutor(
+            catalog: .scripted(["small": model]),
+            requests: server,
+            secrets: FakeSecrets(values: ["KEY": "k"])
+        )
         let workflow = Workflow(name: "Loop", steps: [
             Step("answer", .agent(instruction: "Answer.", tools: [weather]), model: "small"),
         ])
@@ -65,8 +75,11 @@ import Testing
         let first = ScriptedModel("small", replies: [#"<tool:create_task>{"title": "x"}"#, nil])
         let second = ScriptedModel("big", replies: ["Done."])
         let server = FakeServer(json: #"{"id": 1}"#)
-        let executor = WorkflowExecutor(catalog: .scripted(["small": first, "big": second]), requests: server,
-                                    writePolicy: .allow)
+        let executor = WorkflowExecutor(
+            catalog: .scripted(["small": first, "big": second]),
+            requests: server,
+            writePolicy: .allow
+        )
         let workflow = Workflow(name: "Task", steps: [
             Step("do", .agent(instruction: "Create the task.", tools: [createTask]), model: "small", fallback: "big"),
         ])
@@ -98,8 +111,12 @@ import Testing
 @Suite struct AgentErrorTests {
     @Test func aFailedToolReadsClearly() async throws {
         let model = ScriptedModel("small", replies: [#"<tool:weather>{"city": "Lisbon"}"#, "unused"])
-        let tool = AgentTool(name: "weather", description: "Weather.", parameters: [Field("city", .text)],
-                             request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}"))
+        let tool = AgentTool(
+            name: "weather",
+            description: "Weather.",
+            parameters: [Field("city", .text)],
+            request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")
+        )
         let executor = WorkflowExecutor(catalog: .scripted(["small": model]), requests: FakeServer(status: 503, json: "{}"))
         let workflow = Workflow(name: "W", steps: [Step("answer", .agent(instruction: "Answer.", tools: [tool]), model: "small")])
         await #expect(throws: expectedOperationFailure(step: "answer", reason: "weather: The server answered HTTP 503", category: .requestRejected)) {
@@ -110,8 +127,12 @@ import Testing
 
 @Suite struct ToolKitTests {
     private let kit = ToolKit(id: "weather-api", name: "Weather", tools: [
-        AgentTool(name: "weather", description: "Weather.", parameters: [Field("city", .text)],
-                  request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")),
+        AgentTool(
+            name: "weather",
+            description: "Weather.",
+            parameters: [Field("city", .text)],
+            request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")
+        ),
     ])
 
     @Test func agentsUseToolsFromAKit() async throws {

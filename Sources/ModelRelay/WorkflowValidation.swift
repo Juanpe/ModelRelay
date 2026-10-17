@@ -5,6 +5,7 @@ public struct WorkflowValidationIssue: Codable, Sendable, Hashable {
         case invalidName, duplicateName, unavailableReference, missingModel, unknownModel
         case incompatibleModel, invalidSchema, unavailableTool, invalidContext, invalidVersion
     }
+
     public let step: String
     public let kind: Kind
     public let detail: String
@@ -23,7 +24,9 @@ extension Workflow {
             issues.append(.init(step: step, kind: kind, detail: detail))
         }
         if schemaVersion != Self.currentSchemaVersion { issue("Workflow", .invalidVersion, "unsupported workflow schema") }
-        for ref in referenceIssues { issue(ref.step, .unavailableReference, ref.reference) }
+        for ref in referenceIssues {
+            issue(ref.step, .unavailableReference, ref.reference)
+        }
         var names: Set<String> = []
         let knownModels = Set(catalog.ids)
         func fields(_ fields: [Field], step: String) {
@@ -32,15 +35,17 @@ extension Workflow {
             }
             func kind(_ value: Field.Kind) {
                 switch value {
-                case .choice(let options):
+                case let .choice(options):
                     if options.isEmpty || options.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) || Set(options).count != options.count {
                         issue(step, .invalidSchema, "choices must be nonempty and unique")
                     }
-                case .list(let item): kind(item)
+                case let .list(item): kind(item)
                 default: break
                 }
             }
-            for field in fields { kind(field.kind) }
+            for field in fields {
+                kind(field.kind)
+            }
         }
         func visit(_ steps: [Step]) {
             for step in steps {
@@ -48,10 +53,9 @@ extension Workflow {
                     issue(step.name, .invalidName, "step names must be nonempty, unreserved and contain no dots")
                 }
                 if !names.insert(step.name).inserted { issue(step.name, .duplicateName, "step names must be unique across the workflow") }
-                let needsModel: Bool
-                switch step.kind {
-                case .prompt, .extract, .classify, .agent, .decide, .readImage: needsModel = true
-                default: needsModel = false
+                let needsModel: Bool = switch step.kind {
+                case .prompt, .extract, .classify, .agent, .decide, .readImage: true
+                default: false
                 }
                 if needsModel {
                     if step.model == nil { issue(step.name, .missingModel, "this step needs a model") }
@@ -74,36 +78,40 @@ extension Workflow {
                 }
                 var tools: [AgentTool] = []
                 switch step.kind {
-                case .extract(_, let values): fields(values, step: step.name)
-                case .classify(_, let labels):
+                case let .extract(_, values): fields(values, step: step.name)
+                case let .classify(_, labels):
                     if labels.isEmpty || labels.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) || Set(labels.map { $0.lowercased() }).count != labels.count {
                         issue(step.name, .invalidSchema, "labels must be nonempty and distinct ignoring case")
                     }
-                case .decide(let questions):
+                case let .decide(questions):
                     if let problem = Question.problem(in: questions) { issue(step.name, .invalidSchema, problem) }
-                case .agent(_, let own, let ids):
+                case let .agent(_, own, ids):
                     tools = own
                     for id in ids ?? [] {
                         if let kit = kits[id] { if kit.server == nil { tools += kit.tools } }
                         else { issue(step.name, .unavailableTool, id) }
                     }
-                case .useTool(let id, let name, _):
+                case let .useTool(id, name, _):
                     if let kit = kits[id] {
                         if kit.server == nil {
                             if let tool = kit.tools.first(where: { $0.name == name }) { tools = [tool] }
                             else { issue(step.name, .unavailableTool, name) }
                         }
                     } else { issue(step.name, .unavailableTool, id) }
-                case .parallel(let children): visit(children)
-                case .ifEquals(_, _, let yes, let no): visit(yes); visit(no)
-                case .switchOn(_, let cases, let otherwise):
+                case let .parallel(children): visit(children)
+                case let .ifEquals(_, _, yes, no): visit(yes); visit(no)
+                case let .switchOn(_, cases, otherwise):
                     let keys = cases.map { $0.value.trimmingCharacters(in: .whitespaces).lowercased() }
                     if Set(keys).count != keys.count { issue(step.name, .invalidSchema, "switch cases must be distinct ignoring case") }
-                    for item in cases { visit(item.steps) }; visit(otherwise)
+                    for item in cases {
+                        visit(item.steps)
+                    }; visit(otherwise)
                 default: break
                 }
                 if Set(tools.map(\.name)).count != tools.count { issue(step.name, .invalidSchema, "tool names must be unique") }
-                for tool in tools { fields(tool.parameters, step: step.name) }
+                for tool in tools {
+                    fields(tool.parameters, step: step.name)
+                }
                 // Local kit templates can read workflow values too. No discovery/network here.
                 for tool in tools {
                     let available = Set(availableSteps(before: step.name).map(\.name) + ["input"])

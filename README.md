@@ -389,7 +389,6 @@ use `start` / `resume` with a host-owned checkpoint store.
 | Shared conversations, handoffs, resource reuse and privacy | [Context and policies](Documentation/ContextAndPolicies.md) |
 | Validation, typed errors, events and budget accounting | [Execution safety](Documentation/ExecutionSafety.md) |
 | Checkpoints, approval gates and interrupted operations | [Recoverable executions](Documentation/Recovery.md) |
-| Breaking changes from the earlier runtime | [Migration notes](Documentation/NativeRuntimeMigration.md) |
 
 ### 🧪 Try it your way
 
@@ -413,6 +412,17 @@ Found a bug? Have a workflow you'd like to build? I'd love to hear about it.
 - [Open an issue](https://github.com/Juanpe/ModelRelay/issues) with a small example.
 - Suggest an improvement or send a pull request.
 - Add a test for a fix, especially around tools, permissions or recovery.
+
+Before sending a change, run:
+
+```sh
+make format
+make check-style
+```
+
+The shared Swift style uses pinned SwiftFormat and SwiftLint tools, downloaded
+on first use on macOS. Existing lint debt has a checked-in baseline; new
+violations fail the check. `make lint-all` shows the full audit.
 
 Run the tests with:
 

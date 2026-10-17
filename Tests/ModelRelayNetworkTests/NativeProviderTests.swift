@@ -11,10 +11,12 @@ private final class ProviderStub: URLProtocol, @unchecked Sendable {
         var body: Data
         var json: [String: Any] { (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:] }
     }
+
     struct State: Sendable {
         var replies: [(Int, String)] = []
         var sent: [Sent] = []
     }
+
     static let state = Mutex(State())
 
     static func reset(_ replies: [(Int, String)]) { state.withLock { $0 = State(replies: replies) } }
@@ -24,6 +26,7 @@ private final class ProviderStub: URLProtocol, @unchecked Sendable {
         configuration.protocolClasses = [ProviderStub.self]
         return URLSession(configuration: configuration)
     }
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -44,12 +47,17 @@ private final class ProviderStub: URLProtocol, @unchecked Sendable {
             return state.replies.isEmpty ? (599, "Unscripted request") : state.replies.removeFirst()
         }
         let streaming = ((try? JSONSerialization.jsonObject(with: bodyData)) as? [String: Any])?["stream"] as? Bool == true
-        let response = HTTPURLResponse(url: request.url!, statusCode: reply.0, httpVersion: nil,
-                                       headerFields: ["Content-Type": streaming ? "text/event-stream" : "application/json"])!
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: reply.0,
+            httpVersion: nil,
+            headerFields: ["Content-Type": streaming ? "text/event-stream" : "application/json"]
+        )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: (streaming ? ProviderStreamFixture.data(from: Data(reply.1.utf8)) : Data(reply.1.utf8)))
+        client?.urlProtocol(self, didLoad: streaming ? ProviderStreamFixture.data(from: Data(reply.1.utf8)) : Data(reply.1.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
+
     override func stopLoading() {}
 }
 
@@ -76,20 +84,28 @@ private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
 
 @Suite(.serialized) struct NativeProviderTests {
     private func catalog() -> ModelCatalog {
-        let model = OpenAILanguageModel(baseURL: URL(string: "https://provider.test/v1/")!, apiKey: "test-only",
-                                       model: "scripted", session: ProviderStub.session())
+        let model = OpenAILanguageModel(
+            baseURL: URL(string: "https://provider.test/v1/")!,
+            apiKey: "test-only",
+            model: "scripted",
+            session: ProviderStub.session()
+        )
         return ModelCatalog().registering("provider") { model }
     }
 
     private func anthropicCatalog() -> ModelCatalog {
-        let model = AnthropicLanguageModel(baseURL: URL(string: "https://anthropic.test/")!, apiKey: "test-only",
-                                          model: "scripted", session: ProviderStub.session())
+        let model = AnthropicLanguageModel(
+            baseURL: URL(string: "https://anthropic.test/")!,
+            apiKey: "test-only",
+            model: "scripted",
+            session: ProviderStub.session()
+        )
         return ModelCatalog().registering("provider") { model }
     }
 
     private func reply(_ text: String) throws -> (Int, String) {
         let body: [String: Any] = ["id": "chat-test", "object": "chat.completion", "created": 0, "model": "scripted",
-            "choices": [["index": 0, "finish_reason": "stop", "message": ["role": "assistant", "content": text]]]]
+                                   "choices": [["index": 0, "finish_reason": "stop", "message": ["role": "assistant", "content": text]]]]
         return (200, String(decoding: try JSONSerialization.data(withJSONObject: body), as: UTF8.self))
     }
 
@@ -97,9 +113,17 @@ private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
         (200, #"{"id":"chat-test","object":"chat.completion","created":0,"model":"scripted","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"create_task","arguments":"{\"title\":\"Read article\"}"}}]}}]}"#)
     }
 
-    private let createTask = AgentTool(name: "create_task", description: "Create one task.", parameters: [Field("title", .text)],
-        request: HTTPRequest(.post, url: "https://tasks.test/tasks", headers: [.init("Authorization", "Bearer {{secret.KEY}}")],
-                             body: #"{"title":"{{args.title}}"}"#))
+    private let createTask = AgentTool(
+        name: "create_task",
+        description: "Create one task.",
+        parameters: [Field("title", .text)],
+        request: HTTPRequest(
+            .post,
+            url: "https://tasks.test/tasks",
+            headers: [.init("Authorization", "Bearer {{secret.KEY}}")],
+            body: #"{"title":"{{args.title}}"}"#
+        )
+    )
 
     @Test func textUsesTheRealProviderAndOnlyOnePrompt() async throws {
         ProviderStub.reset([try reply("A short summary.")])
@@ -300,13 +324,13 @@ private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
         let store = ProviderCheckpoints()
         let outcome = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server, secrets: Secrets(), writePolicy: .allow)
             .start(workflow, input: .text("Read article"), revision: "1", store: store)
-        guard case .awaitingApproval(let gate) = outcome else { Issue.record("expected pause"); return }
+        guard case let .awaitingApproval(gate) = outcome else { Issue.record("expected pause"); return }
         let data = try JSONEncoder().encode(gate)
         #expect(!String(decoding: data, as: UTF8.self).contains("host-secret-not-for-the-model"))
         let restored = try JSONDecoder().decode(WorkflowExecutionCheckpoint.self, from: data)
         let resumed = try await WorkflowExecutor(catalog: anthropicCatalog(), requests: server)
             .resume(workflow, from: restored, revision: "1", approval: .approve, store: store)
-        guard case .completed(let report) = resumed else { Issue.record("expected completion"); return }
+        guard case let .completed(report) = resumed else { Issue.record("expected completion"); return }
         #expect(report.output == .text("Reviewed"))
         #expect(await server.requests.count == 1)
         #expect(ProviderStub.sent.count == 3)
@@ -321,7 +345,7 @@ private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
     }
 
     @Test func theHostToolBudgetStillAppliesAcrossProviderRounds() async throws {
-        ProviderStub.reset((1...8).map { index in
+        ProviderStub.reset((1 ... 8).map { index in
             (toolReply.0, toolReply.1.replacingOccurrences(of: "call-1", with: "call-\(index)").replacingOccurrences(of: "Read article", with: "Task \(index)"))
         })
         let server = ToolServer()
@@ -335,5 +359,4 @@ private actor ProviderCheckpoints: WorkflowExecutionCheckpointStore {
         #expect(await server.requests.count == AgentTool.maxCallsPerStep)
         #expect(ProviderStub.sent.count == AgentTool.maxCallsPerStep + 1)
     }
-
 }

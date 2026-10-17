@@ -140,7 +140,7 @@ The workflow definition itself remains non-serializable if it has closures.
 > JSON must not authorize skipping review, weakening labels or inventing results.
 
 Schema 2 does not migrate earlier development checkpoint shapes or identity
-aliases. See [migration notes](NativeRuntimeMigration.md).
+aliases.
 
 <a name="interrupted-operations-and-side-effects"></a>
 

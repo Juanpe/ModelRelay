@@ -28,8 +28,11 @@ import Testing
     }
 
     @Test func hostCanRestoreTokensWithoutAdoptingAStore() throws {
-        let tokens = MCPSignIn.Tokens(access: "test-access", refresh: "test-refresh",
-                                      expiresAt: Date().addingTimeInterval(3_600))
+        let tokens = MCPSignIn.Tokens(
+            access: "test-access",
+            refresh: "test-refresh",
+            expiresAt: Date().addingTimeInterval(3600)
+        )
         let restored = try JSONDecoder().decode(MCPSignIn.Tokens.self, from: JSONEncoder().encode(tokens))
         #expect(restored == tokens)
         #expect(!restored.isExpired)

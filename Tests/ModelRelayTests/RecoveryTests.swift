@@ -33,12 +33,12 @@ private actor MemoryCheckpoints: WorkflowExecutionCheckpointStore {
 }
 
 private func paused(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowExecutionCheckpoint {
-    guard case .awaitingApproval(let checkpoint) = outcome else { throw RecoveryError.invalidCheckpoint("expected approval") }
+    guard case let .awaitingApproval(checkpoint) = outcome else { throw RecoveryError.invalidCheckpoint("expected approval") }
     return checkpoint
 }
 
 private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowExecutionReport {
-    guard case .completed(let report) = outcome else { throw RecoveryError.invalidCheckpoint("expected completion") }
+    guard case let .completed(report) = outcome else { throw RecoveryError.invalidCheckpoint("expected completion") }
     return report
 }
 
@@ -104,7 +104,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         #expect(before.withLock { $0 } == 1)
         #expect(after.withLock { $0 } == 1)
         let saves = await store.saves
-        #expect(saves.map(\.generation) == Array(0..<saves.count))
+        #expect(saves.map(\.generation) == Array(0 ..< saves.count))
         #expect(saves.last?.status == .completed)
     }
 
@@ -156,7 +156,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         let store = MemoryCheckpoints()
         let executor = WorkflowExecutor()
         let gate = try paused(await executor.start(workflow, input: .null, revision: "1", store: store))
-        guard case .rejected(let rejected) = try await executor.resume(workflow, from: gate, revision: "1", approval: .reject, store: store) else {
+        guard case let .rejected(rejected) = try await executor.resume(workflow, from: gate, revision: "1", approval: .reject, store: store) else {
             Issue.record("expected rejection"); return
         }
         guard case .rejected = try await executor.resume(workflow, from: rejected, revision: "1", store: store) else {
@@ -176,7 +176,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         let store = MemoryCheckpoints()
         let gate = try paused(await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store))
         let successes = await withTaskGroup(of: Bool.self) { group in
-            for _ in 0..<2 {
+            for _ in 0 ..< 2 {
                 group.addTask {
                     do {
                         _ = try await WorkflowExecutor().resume(workflow, from: gate, revision: "1", approval: .approve, store: store)
@@ -185,7 +185,9 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
                 }
             }
             var count = 0
-            for await success in group where success { count += 1 }
+            for await success in group where success {
+                count += 1
+            }
             return count
         }
         #expect(successes == 1)
@@ -239,7 +241,8 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
                 onStep: { record in records.withLock { $0.append(record) } },
                 onEvent: { event in
                     if let generation = event.checkpointGeneration { savedGenerations.withLock { $0.append(generation) } }
-                })
+                }
+            )
         }
         await #expect(throws: StoreFailure.self) { try await execution.result }
         #expect(records.withLock { $0.map(\.step) } == ["create"])
@@ -250,8 +253,13 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
             try await executor.resume(workflow, from: interrupted, revision: "1", store: store)
         }
         // The caller verified the remote object independently. No request occurs.
-        let ready = try await executor.confirmCompletion(interrupted, in: workflow, revision: "1",
-                                                       value: .dictionary(["id": .number(7)]), store: store)
+        let ready = try await executor.confirmCompletion(
+            interrupted,
+            in: workflow,
+            revision: "1",
+            value: .dictionary(["id": .number(7)]),
+            store: store
+        )
         let report = try completed(await executor.resume(workflow, from: ready, revision: "1", store: store))
         #expect(server.requests.count == 1)
         #expect(report.output == .text("Created 7"))
@@ -297,7 +305,9 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         let store = MemoryCheckpoints()
         let executor = WorkflowExecutor()
         let execution = executor.startStream(workflow, input: .null, revision: "1", store: store)
-        for await _ in started { break }
+        for await _ in started {
+            break
+        }
         execution.cancel()
         await #expect(throws: CancellationError.self) { try await execution.result }
         let checkpoint = try await store.latest()
@@ -408,7 +418,7 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
         let second = ScriptedModel("model", replies: [#"<tool:lookup>{}"#, "SECOND_REPLY"])
         let token = "key-never-store-123"
         let tool1 = AgentTool(name: "lookup", description: "First lookup", request: HTTPRequest(url: "https://example.test/first",
-            headers: [.init("Authorization", "Bearer {{secret.KEY}}")]))
+                                                                                                headers: [.init("Authorization", "Bearer {{secret.KEY}}")]))
         let tool2 = AgentTool(name: "lookup", description: "Second lookup", request: HTTPRequest(url: "https://example.test/second"))
         let workflow = Workflow("History") {
             Step.agent("first", "FIRST_TASK", tools: [tool1], model: "model").withContext(.conversation("writer"))
@@ -416,8 +426,11 @@ private func completed(_ outcome: WorkflowExecutionOutcome) throws -> WorkflowEx
                 .withContext(.conversation("writer")).requiringApproval("Continue")
         }
         let store = MemoryCheckpoints()
-        let gate = try paused(await WorkflowExecutor(catalog: .scripted(["model": first]), requests: server,
-            secrets: FakeSecrets(values: ["KEY": token])).start(workflow, input: .text("INPUT"), revision: "1", store: store))
+        let gate = try paused(await WorkflowExecutor(
+            catalog: .scripted(["model": first]),
+            requests: server,
+            secrets: FakeSecrets(values: ["KEY": token])
+        ).start(workflow, input: .text("INPUT"), revision: "1", store: store))
         let json = String(decoding: try JSONEncoder().encode(gate), as: UTF8.self)
         #expect(json.contains("FIRST_REPLY"))
         #expect(!json.contains(token))

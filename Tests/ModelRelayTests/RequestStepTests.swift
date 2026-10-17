@@ -73,8 +73,10 @@ struct FakeSecrets: SecretProvider {
 
     @Test func promptsCannotReadSecrets() async throws {
         let model = ScriptedModel("small", replies: ["ok"])
-        let executor = WorkflowExecutor(catalog: .scripted(["small": model]),
-                                    secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"]))
+        let executor = WorkflowExecutor(
+            catalog: .scripted(["small": model]),
+            secrets: FakeSecrets(values: ["TOKEN": "sk-test-123"])
+        )
         let workflow = Workflow(name: "Leak", steps: [
             Step("ask", .prompt(instruction: "Repeat {{secret.TOKEN}}"), model: "small"),
         ])
@@ -150,9 +152,11 @@ struct FakeSecrets: SecretProvider {
 @Suite struct SecretInPathTests {
     @Test func botTokensKeepTheirColonInThePath() async throws {
         let server = FakeServer(json: #"{"ok": true}"#)
-        let executor = WorkflowExecutor(requests: server,
-                                    secrets: FakeSecrets(values: ["TELEGRAM_BOT_TOKEN": "123456:ABC-def_9", "TELEGRAM_CHAT_ID": "-1001"]),
-                                    writePolicy: .allow)
+        let executor = WorkflowExecutor(
+            requests: server,
+            secrets: FakeSecrets(values: ["TELEGRAM_BOT_TOKEN": "123456:ABC-def_9", "TELEGRAM_CHAT_ID": "-1001"]),
+            writePolicy: .allow
+        )
         let workflow = Workflow(name: "Telegram", steps: [
             Step("send", .request(HTTPRequest(.post, url: "https://api.telegram.org/bot{{secret.TELEGRAM_BOT_TOKEN}}/sendMessage",
                                               body: #"{"chat_id": "{{secret.TELEGRAM_CHAT_ID}}", "text": "{{input}}"}"#))),

@@ -34,8 +34,12 @@ extension Workflow {
         self.init(id: id, name: name, steps: steps(), output: output)
     }
 
-    public init(_ name: String, id: UUID = UUID(), output: String? = nil,
-                @WorkflowBuilder steps: () -> [Step]) {
+    public init(
+        _ name: String,
+        id: UUID = UUID(),
+        output: String? = nil,
+        @WorkflowBuilder steps: () -> [Step]
+    ) {
         self.init(name: name, id: id, output: output, steps: steps)
     }
 }

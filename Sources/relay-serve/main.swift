@@ -38,18 +38,18 @@ enum JSONValue: Codable {
     func encode(to encoder: any Encoder) throws {
         var c = encoder.singleValueContainer()
         switch self {
-        case .string(let v): try c.encode(v)
-        case .number(let v): try c.encode(v)
-        case .bool(let v): try c.encode(v)
-        case .object(let v): try c.encode(v)
-        case .array(let v): try c.encode(v)
+        case let .string(v): try c.encode(v)
+        case let .number(v): try c.encode(v)
+        case let .bool(v): try c.encode(v)
+        case let .object(v): try c.encode(v)
+        case let .array(v): try c.encode(v)
         case .null: try c.encodeNil()
         }
     }
 
     /// Objects become pretty JSON text: the model reads them as data.
     var asInput: Value {
-        if case .string(let text) = self { return .text(text) }
+        if case let .string(text) = self { return .text(text) }
         let data = (try? JSONEncoder.sorted.encode(self)) ?? Data()
         return .text(String(decoding: data, as: UTF8.self))
     }
@@ -57,12 +57,12 @@ enum JSONValue: Codable {
     init(_ value: Value) {
         switch value {
         case .null: self = .null
-        case .text(let v): self = .string(v)
-        case .number(let v): self = .number(v)
-        case .bool(let v): self = .bool(v)
-        case .list(let v): self = .array(v.map(JSONValue.init))
-        case .dictionary(let v): self = .object(v.mapValues(JSONValue.init))
-        case .image(let v): self = .string(v.text ?? "")
+        case let .text(v): self = .string(v)
+        case let .number(v): self = .number(v)
+        case let .bool(v): self = .bool(v)
+        case let .list(v): self = .array(v.map(JSONValue.init))
+        case let .dictionary(v): self = .object(v.mapValues(JSONValue.init))
+        case let .image(v): self = .string(v.text ?? "")
         }
     }
 }
@@ -79,14 +79,20 @@ extension JSONEncoder {
     steps.map { step in
         var step = step
         switch step.kind {
-        case .ifEquals(let ref, let value, let then, let otherwise):
-            step.kind = .ifEquals(reference: ref, value: value, then: overriding(then, model: model),
-                                  otherwise: overriding(otherwise, model: model))
-        case .switchOn(let ref, let cases, let otherwise):
-            step.kind = .switchOn(reference: ref,
-                                  cases: cases.map { SwitchCase($0.value, steps: overriding($0.steps, model: model)) },
-                                  otherwise: overriding(otherwise, model: model))
-        case .parallel(let children):
+        case let .ifEquals(ref, value, then, otherwise):
+            step.kind = .ifEquals(
+                reference: ref,
+                value: value,
+                then: overriding(then, model: model),
+                otherwise: overriding(otherwise, model: model)
+            )
+        case let .switchOn(ref, cases, otherwise):
+            step.kind = .switchOn(
+                reference: ref,
+                cases: cases.map { SwitchCase($0.value, steps: overriding($0.steps, model: model)) },
+                otherwise: overriding(otherwise, model: model)
+            )
+        case let .parallel(children):
             step.kind = .parallel(overriding(children, model: model))
         case .prompt, .extract, .classify, .agent, .decide:
             step.model = model
@@ -107,8 +113,9 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 var port: UInt16 = 8787
 if let i = arguments.firstIndex(of: "--port"), i + 1 < arguments.count {
     port = UInt16(arguments[i + 1]) ?? port
-    arguments.removeSubrange(i...(i + 1))
+    arguments.removeSubrange(i ... (i + 1))
 }
+
 guard let directory = arguments.first else {
     print("usage: relay-serve <workflows-dir> [--port 8787]")
     exit(2)
@@ -123,6 +130,7 @@ for file in (try? FileManager.default.contentsOfDirectory(atPath: directory)) ??
         print("Skipping \(file): \(error)")
     }
 }
+
 let loaded = workflows
 let listenPort = port
 var catalog = ModelCatalog()
@@ -162,7 +170,7 @@ struct ExecutionResponse: Encodable { let output: JSONValue; let steps: [StepOut
         respond(connection, status: 200, json: ["ok": true])
     case ("GET", "/workflows"):
         respond(connection, status: 200, json: loaded.keys.sorted())
-    case ("POST", let path) where path.hasPrefix("/run/"):
+    case let ("POST", path) where path.hasPrefix("/run/"):
         let name = String(path.dropFirst(5))
         guard var workflow = loaded[name] else {
             return respond(connection, status: 404, json: ErrorBody(error: "No workflow named \(name)"))
@@ -175,11 +183,19 @@ struct ExecutionResponse: Encodable { let output: JSONValue; let steps: [StepOut
             do {
                 let report = try await executor.run(workflow, input: request.input.asInput)
                 let steps = report.records.map {
-                    StepOut(step: $0.step, model: $0.model?.rawValue, fallback: $0.usedFallback, skipped: $0.skipped,
-                            ms: milliseconds($0.duration))
+                    StepOut(
+                        step: $0.step,
+                        model: $0.model?.rawValue,
+                        fallback: $0.usedFallback,
+                        skipped: $0.skipped,
+                        ms: milliseconds($0.duration)
+                    )
                 }
-                respond(connection, status: 200, json: ExecutionResponse(output: JSONValue(report.output), steps: steps,
-                                                              ms: milliseconds(report.duration)))
+                respond(connection, status: 200, json: ExecutionResponse(
+                    output: JSONValue(report.output),
+                    steps: steps,
+                    ms: milliseconds(report.duration)
+                ))
             } catch {
                 respond(connection, status: 500, json: ErrorBody(error: String(describing: error)))
             }
@@ -214,9 +230,11 @@ listener.newConnectionHandler = { connection in
     connection.start(queue: .global())
     receive(connection)
 }
+
 listener.stateUpdateHandler = { state in
     if case .ready = state { print("relay-serve on http://127.0.0.1:\(listenPort) · workflows: \(loaded.keys.sorted().joined(separator: ", "))") }
-    if case .failed(let error) = state { print("Listener failed: \(error)"); exit(1) }
+    if case let .failed(error) = state { print("Listener failed: \(error)"); exit(1) }
 }
+
 listener.start(queue: .main)
 dispatchMain()

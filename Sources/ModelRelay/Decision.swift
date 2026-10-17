@@ -1,5 +1,5 @@
-import Foundation
 import AnyLanguageModel
+import Foundation
 
 /// One typed question a decide step asks about its text.
 public struct Question: Codable, Sendable, Hashable {
@@ -69,11 +69,11 @@ extension Question {
         if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Question “\(name)” has no question text" }
         switch kind {
         case .yesNo: return nil
-        case .choice(let options):
+        case let .choice(options):
             if options.isEmpty || options.count > 255 { return "Question “\(name)” needs between 1 and 255 options" }
             if Set(options.map(\.value)).count != options.count { return "Question “\(name)” repeats an option" }
             return nil
-        case .score(let levels):
+        case let .score(levels):
             if levels.count < 2 || levels.count > 10 { return "Question “\(name)” needs between 2 and 10 levels" }
             return nil
         }
@@ -95,9 +95,9 @@ extension Answer {
         var scores: [String: Value] = [:]
         for answer in answers {
             switch answer.result {
-            case .yesNo(let yes): fields[answer.name] = .bool(yes)
-            case .choice(let value): fields[answer.name] = .text(value)
-            case .score(let score, let level):
+            case let .yesNo(yes): fields[answer.name] = .bool(yes)
+            case let .choice(value): fields[answer.name] = .text(value)
+            case let .score(score, level):
                 fields[answer.name] = .text(level)
                 scores[answer.name] = .number((score * 100).rounded() / 100)
             }
@@ -116,8 +116,8 @@ enum DecisionByLanguageModel {
         let properties = questions.map { question -> DynamicGenerationSchema.Property in
             let schema: DynamicGenerationSchema = switch question.kind {
             case .yesNo: DynamicGenerationSchema(type: Bool.self)
-            case .choice(let options): DynamicGenerationSchema(name: question.name, anyOf: options.map(\.value))
-            case .score(let levels): DynamicGenerationSchema(name: question.name, anyOf: levels)
+            case let .choice(options): DynamicGenerationSchema(name: question.name, anyOf: options.map(\.value))
+            case let .score(levels): DynamicGenerationSchema(name: question.name, anyOf: levels)
             }
             return DynamicGenerationSchema.Property(name: question.name, description: question.instructions, schema: schema)
         }
@@ -131,15 +131,15 @@ enum DecisionByLanguageModel {
             }
             switch question.kind {
             case .yesNo:
-                guard case .bool(let yes) = field else { throw InvalidOutput(reason: "\(question.name) isn't yes or no") }
+                guard case let .bool(yes) = field else { throw InvalidOutput(reason: "\(question.name) isn't yes or no") }
                 return Answer(name: question.name, result: .yesNo(yes))
-            case .choice(let options):
+            case let .choice(options):
                 let text = field.textValue.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
                 guard let option = options.first(where: { $0.value.caseInsensitiveCompare(text) == .orderedSame }) else {
                     throw InvalidOutput(reason: "\(question.name) isn't one of the options")
                 }
                 return Answer(name: question.name, result: .choice(option.value))
-            case .score(let levels):
+            case let .score(levels):
                 let text = field.textValue.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
                 guard let index = levels.firstIndex(where: { $0.caseInsensitiveCompare(text) == .orderedSame }) else {
                     throw InvalidOutput(reason: "\(question.name) isn't one of the levels")

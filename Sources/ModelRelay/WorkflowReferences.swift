@@ -34,9 +34,9 @@ extension Workflow {
         for step in Self.flatten(steps) {
             let available = Set(availableSteps(before: step.name).map(\.name) + ["input"])
             var refs = step.input.map { [$0] } ?? []
-            if case .handoff(let values) = step.context { refs += values }
+            if case let .handoff(values) = step.context { refs += values }
             switch step.kind {
-            case .ifEquals(let reference, _, _, _), .switchOn(let reference, _, _): refs.append(reference)
+            case let .ifEquals(reference, _, _, _), let .switchOn(reference, _, _): refs.append(reference)
             default: break
             }
             for (text, allowsSecrets, allowsArguments) in Self.templates(in: step) {
@@ -60,17 +60,17 @@ extension Workflow {
         for step in steps {
             if step.name == name { return available }
             switch step.kind {
-            case .parallel(let children):
+            case let .parallel(children):
                 // Each child starts with the same available values.
                 for child in children {
                     if let found = find(name, in: [child], available: available) { return found }
                 }
                 available += children
-            case .ifEquals(_, _, let then, let otherwise):
+            case let .ifEquals(_, _, then, otherwise):
                 for branch in [then, otherwise] {
                     if let found = find(name, in: branch, available: available) { return found }
                 }
-            case .switchOn(_, let cases, let otherwise):
+            case let .switchOn(_, cases, otherwise):
                 for branch in cases.map(\.steps) + [otherwise] {
                     if let found = find(name, in: branch, available: available) { return found }
                 }
@@ -83,19 +83,18 @@ extension Workflow {
 
     private static func exported(_ steps: [Step]) -> [Step] {
         steps.flatMap { step in
-            if case .parallel(let children) = step.kind { return children + [step] }
+            if case let .parallel(children) = step.kind { return children + [step] }
             return [step]
         }
     }
 
     private static func flatten(_ steps: [Step]) -> [Step] {
         steps.flatMap { step in
-            let children: [Step]
-            switch step.kind {
-            case .ifEquals(_, _, let then, let otherwise): children = then + otherwise
-            case .switchOn(_, let cases, let otherwise): children = cases.flatMap(\.steps) + otherwise
-            case .parallel(let steps): children = steps
-            default: children = []
+            let children: [Step] = switch step.kind {
+            case let .ifEquals(_, _, then, otherwise): then + otherwise
+            case let .switchOn(_, cases, otherwise): cases.flatMap(\.steps) + otherwise
+            case let .parallel(steps): steps
+            default: []
             }
             return [step] + flatten(children)
         }
@@ -108,14 +107,14 @@ extension Workflow {
             ([request.url, request.body ?? ""] + request.headers.map(\.value)).map { ($0, true, arguments) }
         }
         switch step.kind {
-        case .prompt(let text), .extract(let text, _), .classify(let text, _), .template(let text),
-             .readImage(let text):
+        case let .prompt(text), let .extract(text, _), let .classify(text, _), let .template(text),
+             let .readImage(text):
             return [(text, false, false)]
-        case .agent(let text, let tools, _):
+        case let .agent(text, tools, _):
             return [(text, false, false)] + tools.flatMap { request($0.request, arguments: true) }
-        case .request(let value): return request(value, arguments: false)
-        case .decide(let questions): return questions.map { ($0.instructions, false, false) }
-        case .useTool(_, _, let arguments): return arguments.values.map { ($0, false, false) }
+        case let .request(value): return request(value, arguments: false)
+        case let .decide(questions): return questions.map { ($0.instructions, false, false) }
+        case let .useTool(_, _, arguments): return arguments.values.map { ($0, false, false) }
         default: return []
         }
     }
@@ -130,7 +129,7 @@ extension Workflow {
             var rest = Substring(text), result = ""
             while let open = rest.range(of: "{{"), let close = rest[open.upperBound...].range(of: "}}") {
                 result += rest[..<open.lowerBound]
-                let token = String(rest[open.upperBound..<close.lowerBound])
+                let token = String(rest[open.upperBound ..< close.lowerBound])
                 let trimmed = token.trimmingCharacters(in: .whitespaces)
                 let replaced = reference(trimmed)
                 result += "{{" + (replaced == trimmed ? token : token.replacingOccurrences(of: trimmed, with: replaced)) + "}}"
@@ -149,37 +148,37 @@ extension Workflow {
         var copy = step
         if copy.name == old { copy.name = new }
         copy.input = copy.input.map(reference)
-        if case .handoff(let values) = copy.context { copy.context = .handoff(values.map(reference)) }
+        if case let .handoff(values) = copy.context { copy.context = .handoff(values.map(reference)) }
         switch copy.kind {
-        case .prompt(let text): copy.kind = .prompt(instruction: template(text))
-        case .extract(let text, let fields): copy.kind = .extract(instruction: template(text), fields: fields)
-        case .classify(let text, let labels): copy.kind = .classify(instruction: template(text), labels: labels)
-        case .template(let text): copy.kind = .template(template(text))
-        case .readImage(let text): copy.kind = .readImage(instruction: template(text))
-        case .useTool(let kit, let tool, let arguments):
+        case let .prompt(text): copy.kind = .prompt(instruction: template(text))
+        case let .extract(text, fields): copy.kind = .extract(instruction: template(text), fields: fields)
+        case let .classify(text, labels): copy.kind = .classify(instruction: template(text), labels: labels)
+        case let .template(text): copy.kind = .template(template(text))
+        case let .readImage(text): copy.kind = .readImage(instruction: template(text))
+        case let .useTool(kit, tool, arguments):
             copy.kind = .useTool(kit: kit, tool: tool, arguments: arguments.mapValues(template))
         case .custom:
             // Compiled closures cannot be inspected or rewritten. Only the
             // step name and explicit input reference above can be renamed.
             break
-        case .request(let value): copy.kind = .request(request(value))
-        case .agent(let text, let tools, let kits):
+        case let .request(value): copy.kind = .request(request(value))
+        case let .agent(text, tools, kits):
             copy.kind = .agent(instruction: template(text), tools: tools.map { tool in
                 var tool = tool
                 tool.request = request(tool.request)
                 return tool
             }, kits: kits)
-        case .decide(let questions):
+        case let .decide(questions):
             copy.kind = .decide(questions: questions.map { question in
                 var question = question
                 question.instructions = template(question.instructions)
                 return question
             })
-        case .ifEquals(let value, let expected, let then, let otherwise):
+        case let .ifEquals(value, expected, then, otherwise):
             copy.kind = .ifEquals(reference: reference(value), value: expected, then: children(then), otherwise: children(otherwise))
-        case .switchOn(let value, let cases, let otherwise):
+        case let .switchOn(value, cases, otherwise):
             copy.kind = .switchOn(reference: reference(value), cases: cases.map { .init($0.value, steps: children($0.steps)) }, otherwise: children(otherwise))
-        case .parallel(let list): copy.kind = .parallel(children(list))
+        case let .parallel(list): copy.kind = .parallel(children(list))
         }
         return copy
     }

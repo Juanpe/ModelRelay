@@ -1,7 +1,7 @@
 import Foundation
+import ModelRelay
 import Synchronization
 import Testing
-import ModelRelay
 @testable import ModelRelayMCP
 
 private struct Keys: SecretProvider {
@@ -12,8 +12,12 @@ private struct Keys: SecretProvider {
 // In the serialized network suite: StubProtocol's replies are shared.
 extension NetworkTests {
     private var linear: ToolKit {
-        ToolKit(id: "linear", name: "Linear", tools: [],
-                server: ToolServer(url: "https://mcp.example.com/mcp", headers: [.init("Authorization", "Bearer {{secret.LINEAR_KEY}}")]))
+        ToolKit(
+            id: "linear",
+            name: "Linear",
+            tools: [],
+            server: ToolServer(url: "https://mcp.example.com/mcp", headers: [.init("Authorization", "Bearer {{secret.LINEAR_KEY}}")])
+        )
     }
 
     private func queueSession(tools: String, call: String) {
@@ -32,13 +36,18 @@ extension NetworkTests {
     }
 
     private var connector: MCPConnector {
-        MCPConnector(secrets: Keys(values: ["LINEAR_KEY": "lin_secret"]), clientName: "ExampleClient",
-                     configuration: StubProtocol.configuration())
+        MCPConnector(
+            secrets: Keys(values: ["LINEAR_KEY": "lin_secret"]),
+            clientName: "ExampleClient",
+            configuration: StubProtocol.configuration()
+        )
     }
 
     @Test func mcpServersListAndCallToolsInOneSession() async throws {
-        queueSession(tools: #"[{"name":"create_issue","description":"Creates an issue.","inputSchema":{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"integer"}},"required":["title"]}}]"#,
-                     call: #"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"id\":\"ISS-1\"}"}]}}"#)
+        queueSession(
+            tools: #"[{"name":"create_issue","description":"Creates an issue.","inputSchema":{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"integer"}},"required":["title"]}}]"#,
+            call: #"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"id\":\"ISS-1\"}"}]}}"#
+        )
         let workflow = Workflow(name: "File", steps: [
             Step("file", .useTool(kit: "linear", tool: "create_issue", arguments: ["title": "{{input}}", "priority": "2"])),
         ])
@@ -63,13 +72,15 @@ extension NetworkTests {
     }
 
     @Test func mcpToolFailuresAndSignInSayWhy() async throws {
-        queueSession(tools: #"[{"name":"create_issue","inputSchema":{"type":"object","properties":{}}}]"#,
-                     call: #"{"jsonrpc":"2.0","id":3,"result":{"isError":true,"content":[{"type":"text","text":"Team not found"}]}}"#)
+        queueSession(
+            tools: #"[{"name":"create_issue","inputSchema":{"type":"object","properties":{}}}]"#,
+            call: #"{"jsonrpc":"2.0","id":3,"result":{"isError":true,"content":[{"type":"text","text":"Team not found"}]}}"#
+        )
         let workflow = Workflow(name: "File", steps: [Step("file", .useTool(kit: "linear", tool: "create_issue", arguments: [:]))])
         do {
             _ = try await WorkflowExecutor(writePolicy: .allow, toolKits: [linear], toolServers: connector).run(workflow, input: .text(""))
             Issue.record("expected a tool failure")
-        } catch RelayError.operationFailed(let step, let failure) {
+        } catch let RelayError.operationFailed(step, failure) {
             #expect(step == "file")
             #expect(failure.info.message == "Team not found")
             #expect(failure.info.outcomeUncertain)
@@ -82,7 +93,7 @@ extension NetworkTests {
         do {
             _ = try await connector.connect(to: linear)
             Issue.record("Expected a sign-in error")
-        } catch MCPError.needsSignIn(let challenge) {
+        } catch let MCPError.needsSignIn(challenge) {
             #expect(challenge?.contains("resource_metadata") == true)
         }
     }
@@ -96,13 +107,13 @@ extension NetworkTests {
         do {
             let execution = WorkflowExecutor(toolKits: [linear], toolServers: connector).stream(workflow, input: .null)
             for try await update in execution {
-                if case .event(let event) = update { events.withLock { $0.append(event) } }
+                if case let .event(event) = update { events.withLock { $0.append(event) } }
             }
             _ = try await execution.result
             Issue.record("expected sign in")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.category == .authenticationRequired)
-            guard case .needsSignIn(let challenge) = failure.rootCause as? MCPError else { Issue.record("lost MCP cause"); return }
+            guard case let .needsSignIn(challenge) = failure.rootCause as? MCPError else { Issue.record("lost MCP cause"); return }
             #expect(challenge == "Bearer PRIVATE_CHALLENGE")
             let json = String(decoding: try JSONEncoder().encode(events.withLock { $0 }), as: UTF8.self)
             #expect(!json.contains("PRIVATE_CHALLENGE"))
@@ -165,11 +176,23 @@ extension NetworkTests {
         #expect(item("scope") == "read write")
 
         await #expect(throws: MCPSignIn.Failure.cancelledOrWrongState) {
-            try await MCPSignIn.finish(attempt, callback: URL(string: "\(redirect)?code=abc&state=forged")!, plan: plan,
-                                       client: client, redirectURI: redirect, session: session)
+            try await MCPSignIn.finish(
+                attempt,
+                callback: URL(string: "\(redirect)?code=abc&state=forged")!,
+                plan: plan,
+                client: client,
+                redirectURI: redirect,
+                session: session
+            )
         }
-        let tokens = try await MCPSignIn.finish(attempt, callback: URL(string: "\(redirect)?code=abc&state=\(attempt.state)")!,
-                                                plan: plan, client: client, redirectURI: redirect, session: session)
+        let tokens = try await MCPSignIn.finish(
+            attempt,
+            callback: URL(string: "\(redirect)?code=abc&state=\(attempt.state)")!,
+            plan: plan,
+            client: client,
+            redirectURI: redirect,
+            session: session
+        )
         #expect(tokens.access == "at-1")
         #expect(!tokens.isExpired)
         let form = Dictionary(uniqueKeysWithValues: String(decoding: StubProtocol.sent[3].body, as: UTF8.self)
@@ -190,8 +213,8 @@ extension NetworkTests {
 
     @Test func wellKnownAddressesGoBeforeThePath() {
         #expect(MCPSignIn.wellKnown("oauth-protected-resource", for: URL(string: "https://x.example.com/mcp")!).absoluteString
-                == "https://x.example.com/.well-known/oauth-protected-resource/mcp")
+            == "https://x.example.com/.well-known/oauth-protected-resource/mcp")
         #expect(MCPSignIn.wellKnown("oauth-authorization-server", for: URL(string: "https://auth.example.com")!).absoluteString
-                == "https://auth.example.com/.well-known/oauth-authorization-server")
+            == "https://auth.example.com/.well-known/oauth-authorization-server")
     }
 }

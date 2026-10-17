@@ -4,13 +4,13 @@ import Testing
 
 @Suite struct PageReadingTests {
     static let article = """
-    <!doctype html><html><head><title>Apple ships a new model</title>
-    <style>body { color: red }</style><script>alert("x")</script></head>
-    <body><nav>Home · News · About</nav>
-    <article><h1>Apple ships a new model</h1><p>It runs <b>on device</b> &amp; stays private.</p>
-    <ul><li>Fast</li><li>Small</li></ul><p>Try today&#8217;s build.</p></article>
-    <footer>© 2026</footer></body></html>
-    """
+        <!doctype html><html><head><title>Apple ships a new model</title>
+        <style>body { color: red }</style><script>alert("x")</script></head>
+        <body><nav>Home · News · About</nav>
+        <article><h1>Apple ships a new model</h1><p>It runs <b>on device</b> &amp; stays private.</p>
+        <ul><li>Fast</li><li>Small</li></ul><p>Try today&#8217;s build.</p></article>
+        <footer>© 2026</footer></body></html>
+        """
 
     @Test func aPageIsReadAsItsText() async throws {
         let server = FakeServer(json: Self.article)
@@ -66,7 +66,7 @@ import Testing
     }
 
     @Test func longPagesAreCut() throws {
-        let body = "<html><body><p>" + String(repeating: "word ", count: 20_000) + "</p></body></html>"
+        let body = "<html><body><p>" + String(repeating: "word ", count: 20000) + "</p></body></html>"
         let value = try RequestBuilder.value(from: HTTPResponse(status: 200, body: Data(body.utf8)), reading: .page)
         #expect(value.textValue.count <= PageText.maxCharacters + 1)
     }

@@ -1,5 +1,5 @@
-import Foundation
 import AnyLanguageModel
+import Foundation
 import Synchronization
 
 /// A tool an agent step may call: an HTTP request whose templates can read the
@@ -71,8 +71,14 @@ public struct ServerTool: Codable, Sendable, Hashable {
     /// and needs the same permission as a write request.
     public var changesSomething: Bool
 
-    public init(name: String, title: String? = nil, description: String, parameters: [Field] = [],
-                required: [String] = [], changesSomething: Bool = true) {
+    public init(
+        name: String,
+        title: String? = nil,
+        description: String,
+        parameters: [Field] = [],
+        required: [String] = [],
+        changesSomething: Bool = true
+    ) {
         self.name = name
         self.title = title
         self.description = description
@@ -104,10 +110,14 @@ struct RequestContext: Sendable {
     var control: ExecutionControl? = nil
 
     /// `trace`, when given, receives the request as sent, with secrets hidden.
-    func perform(_ request: HTTPRequest, step: String, trace: StepTrace? = nil,
-                 toolName: String? = nil,
-                 onDispatch: (@Sendable () -> Void)? = nil,
-                 resolve: (String) -> Value?) async throws -> Value {
+    func perform(
+        _ request: HTTPRequest,
+        step: String,
+        trace: StepTrace? = nil,
+        toolName: String? = nil,
+        onDispatch: (@Sendable () -> Void)? = nil,
+        resolve: (String) -> Value?
+    ) async throws -> Value {
         try Task.checkCancellation()
         try policy.checkNetwork(step: step)
         try policy.checkTool(changesSomething: request.method.isWrite, step: step)
@@ -128,9 +138,13 @@ struct RequestContext: Sendable {
         }
     }
 
-    private func performBody(_ request: HTTPRequest, step: String, trace: StepTrace?,
-                             onDispatch: (@Sendable () -> Void)?,
-                             resolve: (String) -> Value?) async throws -> Value {
+    private func performBody(
+        _ request: HTTPRequest,
+        step: String,
+        trace: StepTrace?,
+        onDispatch: (@Sendable () -> Void)?,
+        resolve: (String) -> Value?
+    ) async throws -> Value {
         guard let requests else { throw RelayError.requestsUnavailable(step: step) }
         var values: [String: String] = [:]
         for name in RequestBuilder.secretNames(in: request) {
@@ -173,7 +187,7 @@ extension RequestContext {
         let allowed = switch writePolicy {
         case .allow: true
         case .deny: false
-        case .ask(let confirm): await confirm(prepared)
+        case let .ask(confirm): await confirm(prepared)
         }
         guard allowed else { throw RelayError.writeNotAllowed(step: step) }
     }
@@ -207,7 +221,7 @@ struct ServerToolCall: Tool {
         try context.policy.checkNetwork(step: step)
         try context.policy.checkTool(changesSomething: tool.changesSomething, step: step)
         var values: [String: Value] = [:]
-        if case .dictionary(let fields) = Value(arguments) { values = fields }
+        if case let .dictionary(fields) = Value(arguments) { values = fields }
         try context.control?.beginTool(tool.name, step: step)
         var dispatched = false
         do {
@@ -230,16 +244,26 @@ struct ServerToolCall: Tool {
 /// How a call to a server tool reads in a confirmation or a step's record.
 enum ServerCallDescription {
     static func prepared(kit: ToolKit, tool: String, arguments: [String: Value]) -> PreparedRequest {
-        let body = try? JSONSerialization.data(withJSONObject: ["tool": tool, "arguments": Value.dictionary(arguments).jsonObject],
-                                               options: [.sortedKeys, .prettyPrinted])
-        return PreparedRequest(method: .post, url: URL(string: kit.server?.url ?? "") ?? URL(string: "about:blank")!,
-                               headers: [], body: body, secrets: [])
+        let body = try? JSONSerialization.data(
+            withJSONObject: ["tool": tool, "arguments": Value.dictionary(arguments).jsonObject],
+            options: [.sortedKeys, .prettyPrinted]
+        )
+        return PreparedRequest(
+            method: .post,
+            url: URL(string: kit.server?.url ?? "") ?? URL(string: "about:blank")!,
+            headers: [],
+            body: body,
+            secrets: []
+        )
     }
 }
 
 /// Runs `work`, failing with `InvalidOutput` if it takes longer than `limit`.
-func withTimeout<T: Sendable>(_ limit: Duration, message: String? = nil,
-                              _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+func withTimeout<T: Sendable>(
+    _ limit: Duration,
+    message: String? = nil,
+    _ work: @escaping @Sendable () async throws -> T
+) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask { try await work() }
         group.addTask {
@@ -329,13 +353,13 @@ private struct JSONValue: Encodable {
         var container = encoder.singleValueContainer()
         switch value {
         case .null: try container.encodeNil()
-        case .text(let text): try container.encode(text)
-        case .number(let number): try container.encode(number)
-        case .bool(let bool): try container.encode(bool)
-        case .list(let items): try container.encode(items.map(JSONValue.init))
-        case .dictionary(let fields): try container.encode(fields.mapValues(JSONValue.init))
+        case let .text(text): try container.encode(text)
+        case let .number(number): try container.encode(number)
+        case let .bool(bool): try container.encode(bool)
+        case let .list(items): try container.encode(items.map(JSONValue.init))
+        case let .dictionary(fields): try container.encode(fields.mapValues(JSONValue.init))
         // A tool or a JSON body gets the words, never the picture's bytes.
-        case .image(let image): try container.encode(image.text ?? "")
+        case let .image(image): try container.encode(image.text ?? "")
         }
     }
 }
@@ -347,16 +371,16 @@ func failureReason(_ error: any Error) -> String {
     if let toolError = error as? LanguageModelSession.ToolCallError {
         return "\(toolError.tool.name): \(failureReason(toolError.underlyingError))"
     }
-    if case RelayError.stepFailed(_, let reason) = error { return reason }
-    if case RelayError.operationFailed(_, let failure) = error { return failure.info.message }
+    if case let RelayError.stepFailed(_, reason) = error { return reason }
+    if case let RelayError.operationFailed(_, failure) = error { return failure.info.message }
     if let error = error as? WorkflowValidationError { return "Invalid workflow: " + error.issues.map { "\($0.step): \($0.detail)" }.joined(separator: "; ") }
-    if case RelayError.policyViolation(_, let reason) = error { return reason }
-    if case RelayError.invalidContext(_, let reason) = error { return reason }
+    if case let RelayError.policyViolation(_, reason) = error { return reason }
+    if case let RelayError.invalidContext(_, reason) = error { return reason }
     if case RelayError.writeNotAllowed = error { return "it wanted to change something and wasn't allowed" }
-    if case RelayError.missingSecret(let name, _) = error { return "the key \(name) is missing" }
-    if case RelayError.unknownModel(let id) = error { return "the model “\(id.rawValue)” isn't available" }
+    if case let RelayError.missingSecret(name, _) = error { return "the key \(name) is missing" }
+    if case let RelayError.unknownModel(id) = error { return "the model “\(id.rawValue)” isn't available" }
     if case RelayError.missingModel = error { return "it has no model" }
-    if case RelayError.unknownReference(let reference, _) = error { return "“\(reference)” isn't available here" }
+    if case let RelayError.unknownReference(reference, _) = error { return "“\(reference)” isn't available here" }
     if case RelayError.requestsUnavailable = error { return "requests can't be made here" }
     // An app's own errors (a Keychain failure, say) explain themselves.
     if let described = (error as? any LocalizedError)?.errorDescription { return described }

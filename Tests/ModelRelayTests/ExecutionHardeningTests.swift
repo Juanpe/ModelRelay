@@ -13,6 +13,7 @@ private actor HardeningStore: WorkflowExecutionCheckpointStore {
         entries[checkpoint.executionID] = data
         saved = try JSONDecoder().decode(WorkflowExecutionCheckpoint.self, from: data)
     }
+
     func latest() throws -> WorkflowExecutionCheckpoint { try #require(saved) }
 }
 
@@ -115,7 +116,7 @@ private actor ConcurrencyProbe {
                 Workflow("Fail") { Step.prompt("ask", "PRIVATE_PROMPT", model: "model") }, input: .null)
                 .observing(onStep: { record in records.withLock { $0.append(record) } })
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(let step, let failure) {
+        } catch let RelayError.operationFailed(step, failure) {
             #expect(step == "ask")
             #expect(failure.rootCause is ScriptedModel.Failure)
             #expect(!failure.info.outcomeUncertain)
@@ -131,7 +132,7 @@ private actor ConcurrencyProbe {
         do {
             _ = try await WorkflowExecutor(toolKits: [kit], toolServers: BrokenConnector()).run(workflow, input: .null)
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.category == .authenticationRequired)
             #expect(failure.rootCause as? HostProblem == .authentication)
             #expect(!failure.info.outcomeUncertain)
@@ -143,7 +144,7 @@ private actor ConcurrencyProbe {
         do {
             _ = try await WorkflowExecutor(requests: BrokenTransport(), writePolicy: .allow).run(workflow, input: .null)
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.category == .requestRejected)
             #expect(failure.info.outcomeUncertain)
             #expect(failure.rootCause as? HostProblem == .rejected)
@@ -159,7 +160,7 @@ private actor ConcurrencyProbe {
             _ = try await WorkflowExecutor(catalog: .scripted(["model": model, "backup": fallback]), requests: BrokenTransport(), writePolicy: .allow)
                 .run(workflow, input: .null)
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.outcomeUncertain)
             #expect(failure.info.category == .requestRejected)
             #expect(failure.rootCause as? HostProblem == .rejected)
@@ -176,7 +177,7 @@ private actor ConcurrencyProbe {
             _ = try await WorkflowExecutor(catalog: .scripted(["model": model, "backup": fallback]), requests: server, writePolicy: .allow)
                 .run(Workflow("Post-write failure") { Step.agent("agent", "Write", tools: [tool], model: "model", fallback: "backup") }, input: .null)
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.outcomeUncertain)
             #expect(server.requests.count == 1)
             #expect(fallback.callCount == 0)
@@ -192,13 +193,16 @@ private actor ConcurrencyProbe {
             Step.prompt("answer", "PRIVATE_PROMPT", model: "primary", fallback: "backup")
             Step.request("fetch", HTTPRequest(url: "https://example.test/?key={{secret.KEY}}"))
         }
-        let report = try await WorkflowExecutor(catalog: .scripted(["primary": primary, "backup": backup]), requests: server,
-            secrets: FakeSecrets(values: ["KEY": "SECRET_TOKEN"]))
-            .stream(workflow, input: .text("PRIVATE_INPUT")).observing(onEvent: { event in events.withLock { $0.append(event) } })
+        let report = try await WorkflowExecutor(
+            catalog: .scripted(["primary": primary, "backup": backup]),
+            requests: server,
+            secrets: FakeSecrets(values: ["KEY": "SECRET_TOKEN"])
+        )
+        .stream(workflow, input: .text("PRIVATE_INPUT")).observing(onEvent: { event in events.withLock { $0.append(event) } })
         let all = events.withLock { $0 }
         #expect(all.first?.kind == .executionStarted)
         #expect(all.last?.kind == .executionCompleted)
-        #expect(all.map(\.sequence) == Array(1...all.count))
+        #expect(all.map(\.sequence) == Array(1 ... all.count))
         #expect(all.allSatisfy { $0.executionID == report.executionID && $0.workflowID == workflow.id })
         let kinds = all.map(\.kind)
         #expect(try #require(kinds.firstIndex(of: .modelFailed)) < #require(kinds.firstIndex(of: .fallbackSelected)))
@@ -230,8 +234,11 @@ private actor ConcurrencyProbe {
         let model = ScriptedModel("model", replies: ["unused"])
         let catalog = ModelCatalog().registering("model") { loads.withLock { $0 += 1 }; return model }
         await #expect(throws: RelayError.limitExceeded(.modelCalls)) {
-            try await WorkflowExecutor(catalog: catalog).run(Workflow("Zero") { Step.prompt("ask", "Q", model: "model") },
-                input: .null, limits: .init(maxModelCalls: 0))
+            try await WorkflowExecutor(catalog: catalog).run(
+                Workflow("Zero") { Step.prompt("ask", "Q", model: "model") },
+                input: .null,
+                limits: .init(maxModelCalls: 0)
+            )
         }
         #expect(loads.withLock { $0 } == 0)
     }
@@ -255,7 +262,9 @@ private actor ConcurrencyProbe {
         let server = FakeServer(json: "{}")
         let workflow = Workflow("Parallel tools") {
             Step.parallel("both") {
-                for index in 0..<12 { Step.request("call\(index)", HTTPRequest(url: "https://example.test/\(index)")) }
+                for index in 0 ..< 12 {
+                    Step.request("call\(index)", HTTPRequest(url: "https://example.test/\(index)"))
+                }
             }
         }
         await #expect(throws: RelayError.limitExceeded(.toolCalls)) {
@@ -268,9 +277,11 @@ private actor ConcurrencyProbe {
         let probe = ConcurrencyProbe()
         let workflow = Workflow("Nested concurrency") {
             Step.parallel("outer") {
-                for branch in 0..<3 {
+                for branch in 0 ..< 3 {
                     Step.parallel("branch\(branch)") {
-                        for index in 0..<3 { Step.custom("leaf\(branch)_\(index)") { _ in try await probe.work() } }
+                        for index in 0 ..< 3 {
+                            Step.custom("leaf\(branch)_\(index)") { _ in try await probe.work() }
+                        }
                     }
                 }
             }
@@ -298,7 +309,7 @@ private actor ConcurrencyProbe {
     @Test func durationBudgetIncludesCustomBodiesAndCancelsQueuedLeaves() async {
         let workflow = Workflow("Queued work") {
             Step.parallel("block") {
-                for index in 0..<20 {
+                for index in 0 ..< 20 {
                     Step.custom("slow\(index)") { _ in try await Task.sleep(for: .seconds(1)); return .null }
                 }
             }
@@ -347,15 +358,21 @@ private actor ConcurrencyProbe {
         let outcome = try await WorkflowExecutor(catalog: catalog, limits: .init(maxModelCalls: 1))
             .startStream(workflow, input: .null, revision: "1", store: store)
             .observing(onEvent: { event in events.withLock { $0.append(event) } })
-        guard case .awaitingApproval(let checkpoint) = outcome else { Issue.record("expected pause"); return }
+        guard case let .awaitingApproval(checkpoint) = outcome else { Issue.record("expected pause"); return }
         #expect(checkpoint.usage.modelCalls == 1)
         #expect(checkpoint.limits.maxModelCalls == 1)
         #expect(events.withLock { $0.last?.kind } == .approvalRequired)
         let oldInvocation = events.withLock { $0.first?.invocationID }
         await #expect(throws: RelayError.limitExceeded(.modelCalls)) {
-            try await WorkflowExecutor(catalog: catalog).resumeStream(workflow, from: checkpoint, revision: "1", approval: .approve,
-                store: store, limits: .init(maxModelCalls: 99))
-                .observing(onEvent: { event in events.withLock { $0.append(event) } })
+            try await WorkflowExecutor(catalog: catalog).resumeStream(
+                workflow,
+                from: checkpoint,
+                revision: "1",
+                approval: .approve,
+                store: store,
+                limits: .init(maxModelCalls: 99)
+            )
+            .observing(onEvent: { event in events.withLock { $0.append(event) } })
         }
         #expect(model.callCount == 1)
         let saved = try await store.latest()
@@ -371,7 +388,7 @@ private actor ConcurrencyProbe {
         let store = HardeningStore()
         let pending = try await WorkflowExecutor().startStream(workflow, input: .null, revision: "1", store: store)
             .observing(onEvent: { event in events.withLock { $0.append(event) } })
-        guard case .awaitingApproval(let checkpoint) = pending else { Issue.record("expected pause"); return }
+        guard case let .awaitingApproval(checkpoint) = pending else { Issue.record("expected pause"); return }
         #expect(events.withLock { $0.map(\.kind) } == [.executionStarted, .checkpointSaved, .checkpointSaved, .approvalRequired])
         _ = try await WorkflowExecutor().resumeStream(workflow, from: checkpoint, revision: "1", approval: .reject, store: store)
             .observing(onEvent: { event in events.withLock { $0.append(event) } })
@@ -400,11 +417,17 @@ private actor ConcurrencyProbe {
         }
         let store = HardeningStore()
         let result = try await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store)
-        guard case .awaitingApproval(let checkpoint) = result else { Issue.record("expected pause"); return }
+        guard case let .awaitingApproval(checkpoint) = result else { Issue.record("expected pause"); return }
         let shorter = checkpoint.state.duration - .milliseconds(1)
         await #expect(throws: RelayError.limitExceeded(.duration)) {
-            try await WorkflowExecutor().resume(workflow, from: checkpoint, revision: "1", approval: .approve,
-                store: store, limits: .init(maxDuration: shorter))
+            try await WorkflowExecutor().resume(
+                workflow,
+                from: checkpoint,
+                revision: "1",
+                approval: .approve,
+                store: store,
+                limits: .init(maxDuration: shorter)
+            )
         }
         #expect(calls.withLock { $0 } == 0)
     }
@@ -413,7 +436,7 @@ private actor ConcurrencyProbe {
         let workflow = Workflow("Narrow pending") { Step.template("gate", "ok").requiringApproval("Review") }
         let store = HardeningStore()
         let first = try await WorkflowExecutor().start(workflow, input: .null, revision: "1", store: store)
-        guard case .awaitingApproval(let checkpoint) = first else { Issue.record("expected pause"); return }
+        guard case let .awaitingApproval(checkpoint) = first else { Issue.record("expected pause"); return }
         _ = try await WorkflowExecutor().resume(workflow, from: checkpoint, revision: "1", store: store, limits: .init(maxToolCalls: 0))
         let saved = try await store.latest()
         #expect(saved.generation == checkpoint.generation + 1)
@@ -433,7 +456,7 @@ private actor ConcurrencyProbe {
             _ = try await WorkflowExecutor(requests: server, secrets: FakeSecrets(values: ["KEY": key]))
                 .stream(workflow, input: .null).observing(onStep: { record in records.withLock { $0.append(record) } })
             Issue.record("expected failure")
-        } catch RelayError.operationFailed(_, let failure) {
+        } catch let RelayError.operationFailed(_, failure) {
             #expect(failure.info.category == .authenticationRequired)
             #expect((failure.rootCause as? HTTPResponseFailure)?.status == 401)
             #expect(!failure.info.message.contains(key) && !failure.info.message.contains(encoded))
@@ -455,8 +478,14 @@ private actor ConcurrencyProbe {
         await #expect(throws: RecoveryError.self) {
             try await WorkflowExecutor().confirmCompletion(checkpoint, in: workflow, revision: "1", value: .text("verified"), store: store)
         }
-        let ready = try await WorkflowExecutor().confirmCompletion(checkpoint, in: workflow, revision: "1", value: .text("verified"),
-            elapsed: .seconds(2), store: store)
+        let ready = try await WorkflowExecutor().confirmCompletion(
+            checkpoint,
+            in: workflow,
+            revision: "1",
+            value: .text("verified"),
+            elapsed: .seconds(2),
+            store: store
+        )
         await #expect(throws: RelayError.limitExceeded(.duration)) {
             try await WorkflowExecutor().resume(workflow, from: ready, revision: "1", store: store, limits: .init(maxDuration: .seconds(99)))
         }

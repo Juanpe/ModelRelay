@@ -8,8 +8,15 @@ import UniformTypeIdentifiers
 
 /// A white picture with `text` in large black letters, as PNG.
 func picture(_ text: String = "", width: Int = 900, height: Int = 220) -> Data {
-    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    )!
     context.setFillColor(CGColor(gray: 1, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 80, nil)
@@ -39,7 +46,7 @@ func picture(_ text: String = "", width: Int = 900, height: Int = 220) -> Data {
         #expect(report.output == .text("TOTAL 8.30"))
         #expect(model.images.count == 1)
         #expect(model.images.first.flatMap { image in
-            if case .data(let data, _) = image.source { return ImageCoding.picture(from: data)?.width }
+            if case let .data(data, _) = image.source { return ImageCoding.picture(from: data)?.width }
             return nil
         } == 900)
         #expect(model.prompts.first?.contains("all the text in the image") == true)

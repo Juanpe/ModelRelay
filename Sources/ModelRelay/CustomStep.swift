@@ -33,13 +33,17 @@ public struct CustomStepBody: Sendable, Hashable, Codable {
 
     /// Executable bodies must never be reconstructed from untrusted data.
     public init(from decoder: any Decoder) throws {
-        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
-            debugDescription: "Custom step bodies cannot be decoded. Define the body in Swift code."))
+        throw DecodingError.dataCorrupted(.init(
+            codingPath: decoder.codingPath,
+            debugDescription: "Custom step bodies cannot be decoded. Define the body in Swift code."
+        ))
     }
 
     /// Fails rather than silently dropping code from a saved workflow.
     public func encode(to encoder: any Encoder) throws {
-        throw EncodingError.invalidValue(self, .init(codingPath: encoder.codingPath,
-            debugDescription: "Custom step bodies cannot be encoded. This workflow is in-memory only."))
+        throw EncodingError.invalidValue(self, .init(
+            codingPath: encoder.codingPath,
+            debugDescription: "Custom step bodies cannot be encoded. This workflow is in-memory only."
+        ))
     }
 }

@@ -42,8 +42,16 @@ public struct Step: Codable, Sendable, Hashable {
     /// separate from WritePolicy: approving a step never grants tool permission.
     public var approval: String?
 
-    public init(_ name: String, _ kind: Kind, input: String? = nil, model: ModelID? = nil, fallback: ModelID? = nil,
-                context: StepContext? = nil, policy: WorkflowExecutionPolicy? = nil, approval: String? = nil) {
+    public init(
+        _ name: String,
+        _ kind: Kind,
+        input: String? = nil,
+        model: ModelID? = nil,
+        fallback: ModelID? = nil,
+        context: StepContext? = nil,
+        policy: WorkflowExecutionPolicy? = nil,
+        approval: String? = nil
+    ) {
         self.name = name
         self.kind = kind
         self.input = input

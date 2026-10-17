@@ -57,14 +57,14 @@ struct WorkflowReferenceTests {
             Step("answer", .template("yes")),
             Step("route", .ifEquals(reference: "answer", value: "answer", then: [
                 Step("request", .request(.init(.post, url: "https://api.test/{{answer}}",
-                                                headers: [.init("Authorization", "{{secret.answer}}")], body: "{{answer}} {{answer2}}"))),
+                                               headers: [.init("Authorization", "{{secret.answer}}")], body: "{{answer}} {{answer2}}"))),
             ], otherwise: [])),
         ], output: "answer")
         let renamed = workflow.renameStep(from: "answer", to: "label")
         #expect(renamed)
         #expect(workflow.output == "label")
-        guard case .ifEquals(let reference, let literal, let children, _) = workflow.steps[1].kind,
-              case .request(let request) = children[0].kind else { Issue.record("Missing request"); return }
+        guard case let .ifEquals(reference, literal, children, _) = workflow.steps[1].kind,
+              case let .request(request) = children[0].kind else { Issue.record("Missing request"); return }
         #expect(reference == "label")
         #expect(literal == "answer")
         #expect(request.url == "https://api.test/{{label}}")

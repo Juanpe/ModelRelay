@@ -13,7 +13,9 @@ enum ProviderStreamFixture {
         }
         if let choices = json["choices"] as? [[String: Any]], var message = choices.first?["message"] as? [String: Any] {
             if var calls = message["tool_calls"] as? [[String: Any]] {
-                for index in calls.indices { calls[index]["index"] = index }
+                for index in calls.indices {
+                    calls[index]["index"] = index
+                }
                 message["tool_calls"] = calls
             }
             event(nil, ["id": "chat-test", "object": "chat.completion.chunk", "created": 0, "model": "scripted",
@@ -21,7 +23,7 @@ enum ProviderStreamFixture {
             events += "data: [DONE]\n\n"
         } else if let blocks = json["content"] as? [[String: Any]] {
             event("message_start", ["type": "message_start",
-                "message": ["id": "m1", "type": "message", "role": "assistant", "model": "scripted", "content": []]])
+                                    "message": ["id": "m1", "type": "message", "role": "assistant", "model": "scripted", "content": []]])
             for (index, block) in blocks.enumerated() {
                 var start = block
                 let type = block["type"] as? String ?? ""
@@ -30,11 +32,11 @@ enum ProviderStreamFixture {
                 event("content_block_start", ["type": "content_block_start", "index": index, "content_block": start])
                 if type == "text" {
                     event("content_block_delta", ["type": "content_block_delta", "index": index,
-                        "delta": ["type": "text_delta", "text": block["text"] as? String ?? ""]])
+                                                  "delta": ["type": "text_delta", "text": block["text"] as? String ?? ""]])
                 } else if type == "tool_use" {
                     let data = try! JSONSerialization.data(withJSONObject: block["input"] ?? [:])
                     event("content_block_delta", ["type": "content_block_delta", "index": index,
-                        "delta": ["type": "input_json_delta", "partial_json": String(decoding: data, as: UTF8.self)]])
+                                                  "delta": ["type": "input_json_delta", "partial_json": String(decoding: data, as: UTF8.self)]])
                 }
                 event("content_block_stop", ["type": "content_block_stop", "index": index])
             }

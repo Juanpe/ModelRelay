@@ -6,17 +6,16 @@ import Testing
 
 private func text(of transcript: Transcript) -> String {
     transcript.map { entry in
-        let segments: [Transcript.Segment]
-        switch entry {
-        case .prompt(let value): segments = value.segments
-        case .response(let value): segments = value.segments
-        case .toolOutput(let value): segments = value.segments
-        default: segments = []
+        let segments: [Transcript.Segment] = switch entry {
+        case let .prompt(value): value.segments
+        case let .response(value): value.segments
+        case let .toolOutput(value): value.segments
+        default: []
         }
         return segments.compactMap { segment in
             switch segment {
-            case .text(let value): value.content
-            case .structure(let value): value.content.jsonString
+            case let .text(value): value.content
+            case let .structure(value): value.content.jsonString
             default: nil
             }
         }.joined()
@@ -30,6 +29,7 @@ private actor ConversationLoadGate {
         if opened { return }
         await withCheckedContinuation { continuation = $0 }
     }
+
     func open() { opened = true; continuation?.resume(); continuation = nil }
 }
 
@@ -220,7 +220,9 @@ private actor ConversationLoadGate {
         }
         let workflow = Workflow("Cancel") { Step.prompt("answer", "A", model: "slow") }
         let task = Task { try await WorkflowExecutor(catalog: catalog).run(workflow, input: .null) }
-        while !started.withLock({ $0 }) { await Task.yield() }
+        while !started.withLock({ $0 }) {
+            await Task.yield()
+        }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
@@ -266,7 +268,9 @@ private actor ConversationLoadGate {
         }
         let first = Task { try await resource.get(load) }
         let second = Task { try await resource.get(load) }
-        while await resource.waiterCount < 2 { await Task.yield() }
+        while await resource.waiterCount < 2 {
+            await Task.yield()
+        }
         first.cancel()
         await #expect(throws: CancellationError.self) { try await first.value }
         await gate.open()

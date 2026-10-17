@@ -24,16 +24,20 @@ guard workflow.referenceIssues.isEmpty else {
 let executor = WorkflowExecutor()
 let issues = await executor.validate(workflow)
 precondition(issues.isEmpty)
-let execution = executor.stream(workflow, input: .text("Small models can power focused workflows."),
-    limits: .init(maxModelCalls: usesApple ? 1 : 0, maxToolCalls: 0, maxConcurrentSteps: 2))
+let execution = executor.stream(
+    workflow,
+    input: .text("Small models can power focused workflows."),
+    limits: .init(maxModelCalls: usesApple ? 1 : 0, maxToolCalls: 0, maxConcurrentSteps: 2)
+)
 defer { execution.cancel() }
 for try await update in execution {
     switch update {
-    case .step(let record): print("Finished \(record.step)")
-    case .event(let event):
+    case let .step(record): print("Finished \(record.step)")
+    case let .event(event):
         if event.kind == .executionCompleted { print("Completed execution \(event.executionID)") }
     }
 }
+
 let report = try await execution.result
 print(report.output.textValue)
 precondition(report.usage.modelCalls == (usesApple ? 1 : 0))
@@ -50,6 +54,7 @@ let local = Workflow("Custom Swift") {
     }
     Step.template("result", "Custom: {{normalize}}")
 }
+
 let customReport = try await executor.run(local, input: .text("  native Swift  "))
 precondition(customReport.output == .text("Custom: NATIVE SWIFT"))
 print(customReport.output.textValue)
@@ -67,12 +72,14 @@ let reviewRecipe = Workflow("Private conversation") {
         .withContext(.conversation("reviewer")).withPolicy(.readOnly)
     Step.prompt("handoff", "Use selected data.", model: .appleOnDevice).withContext(.handoff(["review"]))
 }
+
 _ = try JSONEncoder().encode(reviewRecipe)
 
 let privateValues = Workflow("Labels") {
     Step.template("private", "Private data").withPolicy(.localOnly)
     Step.template("copy", "{{private}}")
 }
+
 let privateReport = try await executor.run(privateValues, input: .null)
 precondition(privateReport.outputDataAccess == .localOnly)
 print("Local-only labels propagate through results and templates.")
@@ -92,14 +99,20 @@ let review = Workflow("Human review") {
     Step.custom("draft") { context in .text("Draft: " + context.input.textValue) }
     Step.template("approved", "Approved {{draft}}").requiringApproval("Review before continuing")
 }
+
 let checkpoints = DemoCheckpoints()
 let pending = try await executor.start(review, input: .text("article"), revision: "example-v1", store: checkpoints, limits: .init(maxToolCalls: 0))
-guard case .awaitingApproval(let checkpoint) = pending else { fatalError("Expected review") }
+guard case let .awaitingApproval(checkpoint) = pending else { fatalError("Expected review") }
 precondition(checkpoint.results["draft"] == .text("Draft: article"))
 let restoredCheckpoint = try JSONDecoder().decode(WorkflowExecutionCheckpoint.self, from: JSONEncoder().encode(checkpoint))
-let resumed = try await WorkflowExecutor().resume(review, from: restoredCheckpoint, revision: "example-v1",
-                                                approval: .approve, store: checkpoints)
-guard case .completed(let reviewed) = resumed else { fatalError("Expected completion") }
+let resumed = try await WorkflowExecutor().resume(
+    review,
+    from: restoredCheckpoint,
+    revision: "example-v1",
+    approval: .approve,
+    store: checkpoints
+)
+guard case let .completed(reviewed) = resumed else { fatalError("Expected completion") }
 precondition(reviewed.output == .text("Approved Draft: article"))
 print("Approval checkpoints round-trip without serializing custom code or replaying confirmed steps.")
 
@@ -107,11 +120,12 @@ enum BusinessRuleFailure: Error, WorkflowFailureClassifiable {
     case rejected
     var workflowFailureCategory: WorkflowFailureCategory { .validation }
 }
+
 let rejected = Workflow("Typed host errors") { Step.custom("validate") { _ in throw BusinessRuleFailure.rejected } }
 do {
     _ = try await executor.run(rejected, input: .null)
     fatalError("Expected a business-rule failure")
-} catch RelayError.operationFailed(let step, let failure) {
+} catch let RelayError.operationFailed(step, failure) {
     precondition(step == "validate")
     precondition(failure.rootCause as? BusinessRuleFailure == .rejected)
     precondition(failure.info.category == .validation)

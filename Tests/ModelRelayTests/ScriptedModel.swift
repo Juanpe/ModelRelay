@@ -3,11 +3,16 @@ import Foundation
 import Synchronization
 @testable import ModelRelay
 
-func expectedOperationFailure(step: String, reason: String, category: WorkflowFailureCategory,
-                              uncertain: Bool = false) -> RelayError {
+func expectedOperationFailure(
+    step: String,
+    reason: String,
+    category: WorkflowFailureCategory,
+    uncertain: Bool = false
+) -> RelayError {
     struct Expected: Error {}
     return .operationFailed(step: step, failure: .init(
-        info: .init(category: category, message: reason, outcomeUncertain: uncertain), underlyingError: Expected()))
+        info: .init(category: category, message: reason, outcomeUncertain: uncertain), underlyingError: Expected()
+    ))
 }
 
 /// Native AnyLanguageModel test backend. Calls go through the real session;
@@ -39,8 +44,12 @@ final class ScriptedModel: LanguageModel {
     var prompts: [String] { seen.withLock { $0 } }
     var images: [Transcript.ImageSegment] { pictures.withLock { $0 } }
 
-    func respond<Content: Generable>(within session: LanguageModelSession, to prompt: Prompt,
-        generating type: Content.Type, includeSchemaInPrompt: Bool, options: GenerationOptions
+    func respond<Content: Generable>(
+        within session: LanguageModelSession,
+        to prompt: Prompt,
+        generating type: Content.Type,
+        includeSchemaInPrompt: Bool,
+        options: GenerationOptions
     ) async throws -> LanguageModelSession.Response<Content> {
         var entries: [Transcript.Entry] = []
         while true {
@@ -54,7 +63,7 @@ final class ScriptedModel: LanguageModel {
             guard let reply = next() else { throw Failure() }
             if reply == "<hang>" { try await Task.sleep(for: .seconds(60)) }
             if reply.hasPrefix("<tool:"), let close = reply.firstIndex(of: ">") {
-                let name = String(reply[reply.index(reply.startIndex, offsetBy: 6)..<close])
+                let name = String(reply[reply.index(reply.startIndex, offsetBy: 6) ..< close])
                 let arguments = try GeneratedContent(json: String(reply[reply.index(after: close)...]))
                 let call = Transcript.ToolCall(id: UUID().uuidString, toolName: name, arguments: arguments)
                 entries.append(.toolCalls(.init([call])))
@@ -67,28 +76,39 @@ final class ScriptedModel: LanguageModel {
                 }
                 continue
             }
-            let raw: GeneratedContent
-            if type == String.self {
-                raw = GeneratedContent(reply)
+            let raw: GeneratedContent = if type == String.self {
+                GeneratedContent(reply)
             } else {
                 // Existing scripted labels include deliberately invalid plain
                 // strings to exercise executor validation/fallback.
-                raw = (try? GeneratedContent(json: reply)) ?? GeneratedContent(reply)
+                (try? GeneratedContent(json: reply)) ?? GeneratedContent(reply)
             }
             return try .init(content: Content(raw), rawContent: raw, transcriptEntries: ArraySlice(entries))
         }
     }
 
-    func streamResponse<Content: Generable>(within session: LanguageModelSession, to prompt: Prompt,
-        generating type: Content.Type, includeSchemaInPrompt: Bool, options: GenerationOptions
+    func streamResponse<Content: Generable>(
+        within session: LanguageModelSession,
+        to prompt: Prompt,
+        generating type: Content.Type,
+        includeSchemaInPrompt: Bool,
+        options: GenerationOptions
     ) -> sending LanguageModelSession.ResponseStream<Content> {
         .init(stream: AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let response = try await respond(within: session, to: prompt, generating: type,
-                        includeSchemaInPrompt: includeSchemaInPrompt, options: options)
-                    continuation.yield(.init(content: response.content.asPartiallyGenerated(), rawContent: response.rawContent,
-                                             transcriptEntries: response.transcriptEntries))
+                    let response = try await respond(
+                        within: session,
+                        to: prompt,
+                        generating: type,
+                        includeSchemaInPrompt: includeSchemaInPrompt,
+                        options: options
+                    )
+                    continuation.yield(.init(
+                        content: response.content.asPartiallyGenerated(),
+                        rawContent: response.rawContent,
+                        transcriptEntries: response.transcriptEntries
+                    ))
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
@@ -104,19 +124,21 @@ final class ScriptedModel: LanguageModel {
     private func record(_ transcript: Transcript) {
         func text(_ segments: [Transcript.Segment]) -> String {
             segments.compactMap { segment in
-                if case .text(let text) = segment { text.content } else { nil }
+                if case let .text(text) = segment { text.content } else { nil }
             }.joined()
         }
         let text = transcript.compactMap { entry -> String? in
             switch entry {
-            case .prompt(let prompt): text(prompt.segments)
-            case .toolOutput(let output): "[\(output.toolName)] " + text(output.segments)
+            case let .prompt(prompt): text(prompt.segments)
+            case let .toolOutput(output): "[\(output.toolName)] " + text(output.segments)
             default: nil
             }
         }.joined(separator: "\n")
         seen.withLock { $0.append(text) }
-        for case .prompt(let prompt) in transcript {
-            for case .image(let image) in prompt.segments { pictures.withLock { $0.append(image) } }
+        for case let .prompt(prompt) in transcript {
+            for case let .image(image) in prompt.segments {
+                pictures.withLock { $0.append(image) }
+            }
         }
     }
 
@@ -129,7 +151,9 @@ final class ScriptedModel: LanguageModel {
 extension ModelCatalog {
     static func scripted(_ models: [ModelID: ScriptedModel]) -> ModelCatalog {
         var catalog = ModelCatalog()
-        for (id, model) in models { catalog.register(id, supportsImages: model.seesImages) { model } }
+        for (id, model) in models {
+            catalog.register(id, supportsImages: model.seesImages) { model }
+        }
         return catalog
     }
 }

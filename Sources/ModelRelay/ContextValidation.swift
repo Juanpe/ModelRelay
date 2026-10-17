@@ -11,7 +11,7 @@ extension Workflow {
                 case .prompt, .extract, .classify, .agent, .decide, .readImage: break
                 default: throw RelayError.invalidContext(step: step.name, reason: "context is only supported on model steps")
                 }
-                if case .conversation(let name) = context {
+                if case let .conversation(name) = context {
                     guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         throw RelayError.invalidContext(step: step.name, reason: "the conversation name is empty")
                     }
@@ -28,7 +28,7 @@ extension Workflow {
             }
             let children: [Step]
             switch step.kind {
-            case .parallel(let list):
+            case let .parallel(list):
                 var seen: Set<ExecutionResources.Key> = []
                 for child in list {
                     let childKeys = try keys(child)
@@ -38,13 +38,17 @@ extension Workflow {
                     seen.formUnion(childKeys)
                 }
                 return own.union(seen)
-            case .ifEquals(_, _, let yes, let no): children = yes + no
-            case .switchOn(_, let cases, let other): children = cases.flatMap(\.steps) + other
+            case let .ifEquals(_, _, yes, no): children = yes + no
+            case let .switchOn(_, cases, other): children = cases.flatMap(\.steps) + other
             default: children = []
             }
-            for child in children { own.formUnion(try keys(child)) }
+            for child in children {
+                own.formUnion(try keys(child))
+            }
             return own
         }
-        for step in steps { _ = try keys(step) }
+        for step in steps {
+            _ = try keys(step)
+        }
     }
 }

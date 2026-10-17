@@ -26,7 +26,7 @@ import Testing
         } else { .text("Original") }
         let task = Task { try await executor.run(workflow, input: input) }
         defer { task.cancel() }
-        for _ in 0..<200 {
+        for _ in 0 ..< 200 {
             if slow.callCount > 0 { break }
             try await Task.sleep(for: .milliseconds(5))
         }

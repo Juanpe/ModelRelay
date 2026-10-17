@@ -36,19 +36,32 @@ private final class Asked: Sendable {
 
 @Suite struct ToolServerTests {
     private let kit = ToolKit(id: "linear", name: "Linear", tools: [], server: ToolServer(url: "https://mcp.example.com/mcp"))
-    private let createIssue = ServerTool(name: "create_issue", description: "Creates an issue.",
-                                         parameters: [Field("title", .text), Field("priority", .number), Field("urgent", .bool),
-                                                      Field("labels", .list(.text)), Field("notes", .text)],
-                                         required: ["title"], changesSomething: true)
-    private let search = ServerTool(name: "search.issues", description: "Finds issues.",
-                                    parameters: [Field("query", .text)], required: ["query"], changesSomething: false)
+    private let createIssue = ServerTool(
+        name: "create_issue",
+        description: "Creates an issue.",
+        parameters: [Field("title", .text), Field("priority", .number), Field("urgent", .bool),
+                     Field("labels", .list(.text)), Field("notes", .text)],
+        required: ["title"],
+        changesSomething: true
+    )
+    private let search = ServerTool(
+        name: "search.issues",
+        description: "Finds issues.",
+        parameters: [Field("query", .text)],
+        required: ["query"],
+        changesSomething: false
+    )
 
     @Test func agentsCallServerToolsAndWritesAskFirst() async throws {
         let server = FakeToolServer([createIssue, search])
         let model = ScriptedModel("small", replies: [#"<tool:create_issue>{"title": "Fix login"}"#, "Created ISS-1."])
         let asked = Asked()
-        let executor = WorkflowExecutor(catalog: .scripted(["small": model]), writePolicy: asked.policy(true),
-                                    toolKits: [kit], toolServers: server)
+        let executor = WorkflowExecutor(
+            catalog: .scripted(["small": model]),
+            writePolicy: asked.policy(true),
+            toolKits: [kit],
+            toolServers: server
+        )
         let workflow = Workflow(name: "File", steps: [
             Step("answer", .agent(instruction: "File it.", tools: [], kits: ["linear"]), model: "small"),
         ])
@@ -127,8 +140,12 @@ private final class Asked: Sendable {
 
     @Test func useAToolRunsRequestToolsFromAKit() async throws {
         let weather = ToolKit(id: "weather", name: "Weather", tools: [
-            AgentTool(name: "forecast", description: "Forecast.", parameters: [Field("city", .text)],
-                      request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")),
+            AgentTool(
+                name: "forecast",
+                description: "Forecast.",
+                parameters: [Field("city", .text)],
+                request: HTTPRequest(url: "https://api.example.com/w?q={{args.city}}")
+            ),
         ])
         let api = FakeServer(json: #"{"temp": 19}"#)
         let workflow = Workflow(name: "W", steps: [

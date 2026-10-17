@@ -35,8 +35,13 @@ public struct HTTPRequest: Codable, Sendable, Hashable {
     public var body: String?
     public var reading: Reading?
 
-    public init(_ method: Method = .get, url: String, headers: [Header] = [], body: String? = nil,
-                reading: Reading? = nil) {
+    public init(
+        _ method: Method = .get,
+        url: String,
+        headers: [Header] = [],
+        body: String? = nil,
+        reading: Reading? = nil
+    ) {
         self.method = method
         self.url = url
         self.headers = headers
@@ -57,7 +62,9 @@ public struct PreparedRequest: Sendable, CustomStringConvertible {
 
     public var description: String {
         var text = "\(method.rawValue) \(url.absoluteString)"
-        for header in headers { text += "\n\(header.name): \(header.value)" }
+        for header in headers {
+            text += "\n\(header.name): \(header.value)"
+        }
         if let body, let string = String(data: body, encoding: .utf8) { text += "\n\n\(string)" }
         return RequestBuilder.redact(text, secrets: secrets)
     }
@@ -123,14 +130,14 @@ extension Value {
     package var jsonObject: Any {
         switch self {
         case .null: NSNull()
-        case .text(let text): text
+        case let .text(text): text
         // Through the shortest description, so 4.5 + 3.8 is sent as 8.3,
         // not 8.3000000000000007.
-        case .number(let number): NSDecimalNumber(string: Value.number(number).textValue)
-        case .bool(let bool): bool
-        case .list(let items): items.map(\.jsonObject)
-        case .dictionary(let fields): fields.mapValues(\.jsonObject)
-        case .image(let image): image.text ?? ""
+        case let .number(number): NSDecimalNumber(string: Value.number(number).textValue)
+        case let .bool(bool): bool
+        case let .list(items): items.map(\.jsonObject)
+        case let .dictionary(fields): fields.mapValues(\.jsonObject)
+        case let .image(image): image.text ?? ""
         }
     }
 }
@@ -150,20 +157,25 @@ enum RequestBuilder {
     static func secretNames(in request: HTTPRequest) -> Set<String> {
         let parts = [request.url, request.body ?? ""] + request.headers.map(\.value)
         var names = Set<String>()
+
         for part in parts {
             var rest = Substring(part)
             while let open = rest.range(of: "{{") {
                 guard let close = rest[open.upperBound...].range(of: "}}") else { break }
-                let reference = rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces)
+                let reference = rest[open.upperBound ..< close.lowerBound].trimmingCharacters(in: .whitespaces)
                 if reference.hasPrefix("secret.") { names.insert(String(reference.dropFirst("secret.".count))) }
                 rest = rest[close.upperBound...]
             }
         }
+
         return names
     }
 
-    static func prepare(_ request: HTTPRequest, secrets: [String: String],
-                        resolve: (String) -> Value?) throws -> PreparedRequest {
+    static func prepare(
+        _ request: HTTPRequest,
+        secrets: [String: String],
+        resolve: (String) -> Value?
+    ) throws -> PreparedRequest {
         func lookup(_ reference: String) -> Value? {
             if reference.hasPrefix("secret.") {
                 return secrets[String(reference.dropFirst("secret.".count))].map(Value.text)
@@ -178,30 +190,40 @@ enum RequestBuilder {
         for (name, value) in secrets {
             urlTemplate = urlTemplate.replacingOccurrences(of: "{{secret.\(name)}}", with: Self.secretEncode(value))
         }
+
         // An address that is one value, like {{input}}, is that value as a
         // whole (a link passed in); it still has to be an http(s) URL below.
         // Inside a longer address, values are encoded and can't reshape it.
-        let urlText: String
-        if let reference = Self.wholeReference(urlTemplate), !reference.hasPrefix("secret.") {
-            urlText = lookup(reference)?.textValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let urlText: String = if let reference = Self.wholeReference(urlTemplate), !reference.hasPrefix("secret.") {
+            lookup(reference)?.textValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         } else {
-            urlText = Template.render(urlTemplate, lookup, escape: Self.percentEncode)
+            Template.render(urlTemplate, lookup, escape: Self.percentEncode)
         }
         guard let url = URL(string: urlText), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http", url.host != nil else {
+              scheme == "https" || scheme == "http", url.host != nil
+        else {
             throw InvalidRequest(reason: "“\(request.url)” isn't a valid http or https URL")
         }
+
         let headers = request.headers.map { header in
             // Header values can't hold line breaks: they would start a new header.
-            HTTPRequest.Header(Self.singleLine(header.name),
-                               Self.singleLine(Template.render(header.value, lookup)))
+            HTTPRequest.Header(
+                Self.singleLine(header.name),
+                Self.singleLine(Template.render(header.value, lookup))
+            )
         }
         let body = request.body.map { template -> Data in
             let isJSON = template.trimmingCharacters(in: .whitespacesAndNewlines).first.map { $0 == "{" || $0 == "[" } ?? false
             return Data((isJSON ? Self.renderJSON(template, lookup) : Template.render(template, lookup)).utf8)
         }
-        return PreparedRequest(method: request.method, url: url, headers: headers, body: body,
-                               secrets: Array(secrets.values))
+
+        return PreparedRequest(
+            method: request.method,
+            url: url,
+            headers: headers,
+            body: body,
+            secrets: Array(secrets.values)
+        )
     }
 
     /// `NAME` when the template is exactly `{{NAME}}`.
@@ -216,7 +238,7 @@ enum RequestBuilder {
     /// Turns a response into a step value: JSON becomes fields, anything else
     /// text; read as a page, the page's readable text.
     static func value(from response: HTTPResponse, reading: HTTPRequest.Reading? = nil) throws -> Value {
-        guard (200..<300).contains(response.status) else {
+        guard (200 ..< 300).contains(response.status) else {
             // The server's own explanation, when it gives one, says why.
             let detail = errorDetail(response.body).map { ": \($0)" } ?? ""
             throw HTTPResponseFailure(status: response.status, description: "The server answered HTTP \(response.status)\(detail)")
@@ -224,11 +246,13 @@ enum RequestBuilder {
         guard response.body.count <= maxResponseBytes else {
             throw InvalidOutput(reason: "The response is larger than \(maxResponseBytes / 1_000_000) MB")
         }
+
         if reading == .page {
             let text = PageText.extract(html: String(decoding: response.body, as: UTF8.self))
             guard !text.isEmpty else { throw InvalidOutput(reason: "The page has no readable text") }
             return .text(text.count > PageText.maxCharacters ? String(text.prefix(PageText.maxCharacters)) + "…" : text)
         }
+
         if response.body.isEmpty { return .null }
         return Value(json: response.body) ?? .text(String(decoding: response.body, as: UTF8.self))
     }
@@ -281,8 +305,9 @@ enum RequestBuilder {
         var index = template.startIndex
         while index < template.endIndex {
             if template[index...].hasPrefix("{{"),
-               let close = template[template.index(index, offsetBy: 2)...].range(of: "}}") {
-                let reference = template[template.index(index, offsetBy: 2)..<close.lowerBound]
+               let close = template[template.index(index, offsetBy: 2)...].range(of: "}}")
+            {
+                let reference = template[template.index(index, offsetBy: 2) ..< close.lowerBound]
                     .trimmingCharacters(in: .whitespaces)
                 let value = lookup(reference)
                 output += inString ? jsonEscape(value.map(Template.inlineText) ?? "") : jsonLiteral(value)
@@ -305,12 +330,14 @@ enum RequestBuilder {
 
     static func jsonLiteral(_ value: Value?) -> String {
         guard let value else { return "null" }
-        if case .text(let text) = value {
+        if case let .text(text) = value {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return isJSONScalar(trimmed) ? trimmed : "\"" + jsonEscape(text) + "\""
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: value.jsonObject,
-                                                     options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]) else {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: value.jsonObject,
+            options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]
+        ) else {
             return "null"
         }
         return String(decoding: data, as: UTF8.self)
@@ -341,7 +368,7 @@ struct InvalidRequest: Error, CustomStringConvertible {
 /// Only ever text: nothing in the page is run.
 enum PageText {
     /// Text beyond this is cut: enough for an article, not for a whole site.
-    static let maxCharacters = 30_000
+    static let maxCharacters = 30000
 
     static func extract(html: String) -> String {
         var page = html
@@ -362,8 +389,11 @@ enum PageText {
     /// entities are decoded and blank runs collapse.
     static func plain(_ html: String) -> String {
         var text = html.replacingOccurrences(of: #"<!--[\s\S]*?-->"#, with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?i)<(br|/p|/div|/li|/h[1-6]|/tr|/section|/blockquote)[^>]*>"#,
-                                         with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(
+            of: #"(?i)<(br|/p|/div|/li|/h[1-6]|/tr|/section|/blockquote)[^>]*>"#,
+            with: "\n",
+            options: .regularExpression
+        )
         text = text.replacingOccurrences(of: #"(?i)<li[^>]*>"#, with: "• ", options: .regularExpression)
         text = text.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
         text = decodeEntities(text)
@@ -372,7 +402,9 @@ enum PageText {
                 .trimmingCharacters(in: .whitespaces)
         }
         var result: [String] = []
-        for line in lines where !(line.isEmpty && (result.last?.isEmpty ?? true)) { result.append(line) }
+        for line in lines where !(line.isEmpty && (result.last?.isEmpty ?? true)) {
+            result.append(line)
+        }
         return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -384,14 +416,16 @@ enum PageText {
         guard let range = html.range(of: "(?is)<\(tag)\\b[^>]*>(.*?)</\(tag)>", options: .regularExpression) else { return nil }
         let match = String(html[range])
         guard let open = match.firstIndex(of: ">"), let close = match.range(of: "</", options: .backwards) else { return nil }
-        return String(match[match.index(after: open)..<close.lowerBound])
+        return String(match[match.index(after: open) ..< close.lowerBound])
     }
 
     private static func decodeEntities(_ text: String) -> String {
         var text = text
         let named = ["&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'",
                      "&rsquo;": "’", "&lsquo;": "‘", "&rdquo;": "”", "&ldquo;": "“", "&mdash;": "—", "&ndash;": "–", "&hellip;": "…"]
-        for (entity, character) in named { text = text.replacingOccurrences(of: entity, with: character) }
+        for (entity, character) in named {
+            text = text.replacingOccurrences(of: entity, with: character)
+        }
         while let range = text.range(of: #"&#[xX]?[0-9a-fA-F]+;"#, options: .regularExpression) {
             let code = text[range].dropFirst(2).dropLast()
             let value = code.first == "x" || code.first == "X" ? UInt32(code.dropFirst(), radix: 16) : UInt32(code)

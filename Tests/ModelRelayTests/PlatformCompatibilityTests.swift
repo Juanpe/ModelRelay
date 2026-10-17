@@ -53,8 +53,14 @@ private final class CompatibilityTool: Tool {
     @Test func nonAppleProvidersKeepDynamicSessionsOnOlderSystems() async throws {
         let resources = ExecutionResources()
         let model = ScriptedModel("model", replies: [])
-        let conversation = try await resources.acquire(nil, model: "model", backend: model, tools: [],
-            data: .unrestricted, step: "first")
+        let conversation = try await resources.acquire(
+            nil,
+            model: "model",
+            backend: model,
+            tools: [],
+            data: .unrestricted,
+            step: "first"
+        )
         #expect(conversation.tools != nil)
         await resources.release(nil, model: "model", conversation: conversation)
         await resources.finish()
@@ -63,8 +69,14 @@ private final class CompatibilityTool: Tool {
     @Test func appleProviderUsesFixedToolsBeforeOS27() async throws {
         guard #available(macOS 26, iOS 26, visionOS 26, *) else { return }
         let resources = ExecutionResources()
-        let conversation = try await resources.acquire(nil, model: .appleOnDevice, backend: SystemLanguageModel.default,
-            tools: [], data: .unrestricted, step: "first")
+        let conversation = try await resources.acquire(
+            nil,
+            model: .appleOnDevice,
+            backend: SystemLanguageModel.default,
+            tools: [],
+            data: .unrestricted,
+            step: "first"
+        )
         if #available(macOS 27, iOS 27, visionOS 27, *) {
             #expect(conversation.tools != nil)
         } else {
@@ -78,15 +90,27 @@ private final class CompatibilityTool: Tool {
         let resources = ExecutionResources(dynamicInstructions: false)
         let model = ScriptedModel("model", replies: [#"<tool:lookup>{}"#, "EARLIER_REPLY", #"<tool:lookup>{}"#, "LATER_REPLY"])
         let context = StepContext.conversation("writer")
-        let first = try await resources.acquire(context, model: "model", backend: model, tools: [CompatibilityTool("OLD_RESULT")],
-            data: .localOnly, step: "first")
+        let first = try await resources.acquire(
+            context,
+            model: "model",
+            backend: model,
+            tools: [CompatibilityTool("OLD_RESULT")],
+            data: .localOnly,
+            step: "first"
+        )
         #expect(first.tools == nil)
         #expect(try await first.session.streamResponse(to: "FIRST_TASK").collect().content == "EARLIER_REPLY")
         await first.session.waitForResponseCompletion()
         await resources.release(context, model: "model", conversation: first)
 
-        let second = try await resources.acquire(context, model: "model", backend: model, tools: [CompatibilityTool("NEW_RESULT")],
-            data: .localOnly, step: "second")
+        let second = try await resources.acquire(
+            context,
+            model: "model",
+            backend: model,
+            tools: [CompatibilityTool("NEW_RESULT")],
+            data: .localOnly,
+            step: "second"
+        )
         #expect(first.session !== second.session)
         #expect(try await second.session.streamResponse(to: "SECOND_TASK").collect().content == "LATER_REPLY")
         await second.session.waitForResponseCompletion()
@@ -102,11 +126,19 @@ private final class CompatibilityTool: Tool {
         #expect(saved.first?.data == .localOnly)
         await resources.finish()
 
-        let restored = ExecutionResources(conversations: try JSONDecoder().decode([CheckpointConversation].self,
-            from: JSONEncoder().encode(saved)), dynamicInstructions: false)
+        let restored = ExecutionResources(conversations: try JSONDecoder().decode(
+            [CheckpointConversation].self,
+            from: JSONEncoder().encode(saved)
+        ), dynamicInstructions: false)
         let continuedModel = ScriptedModel("restored", replies: ["THIRD"])
-        let third = try await restored.acquire(context, model: "model", backend: continuedModel, tools: [],
-            data: .localOnly, step: "third")
+        let third = try await restored.acquire(
+            context,
+            model: "model",
+            backend: continuedModel,
+            tools: [],
+            data: .localOnly,
+            step: "third"
+        )
         #expect(third.session.tools.isEmpty)
         #expect(try await third.session.respond(to: "THIRD_TASK").content == "THIRD")
         #expect(continuedModel.prompts.first?.contains("SECOND_TASK") == true)
@@ -120,8 +152,14 @@ private final class CompatibilityTool: Tool {
         let model = ScriptedModel("model", replies: ["FIRST_REPLY", nil, "THIRD_REPLY"])
         let context = StepContext.conversation("writer")
         for (index, prompt) in ["FIRST_TASK", "FAILED_TASK", "THIRD_TASK"].enumerated() {
-            let conversation = try await resources.acquire(context, model: "model", backend: model, tools: [],
-                data: .unrestricted, step: "step\(index)")
+            let conversation = try await resources.acquire(
+                context,
+                model: "model",
+                backend: model,
+                tools: [],
+                data: .unrestricted,
+                step: "step\(index)"
+            )
             if index == 1 {
                 await #expect(throws: ScriptedModel.Failure.self) { try await conversation.session.respond(to: prompt) }
             } else {
@@ -143,8 +181,14 @@ private final class CompatibilityTool: Tool {
         var tool: CompatibilityTool? = CompatibilityTool("value")
         weak let released = tool
         do {
-            let conversation = try await resources.acquire(context, model: "model", backend: model,
-                tools: [try #require(tool)], data: .unrestricted, step: "first")
+            let conversation = try await resources.acquire(
+                context,
+                model: "model",
+                backend: model,
+                tools: [try #require(tool)],
+                data: .unrestricted,
+                step: "first"
+            )
             _ = try await conversation.session.respond(to: "Task")
             await conversation.session.waitForResponseCompletion()
             await resources.release(context, model: "model", conversation: conversation)

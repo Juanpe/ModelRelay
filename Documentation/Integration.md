@@ -172,4 +172,4 @@ Apple frameworks; general cloud providers come from AnyLanguageModel.
 MLX needs both its product and `traits: ["MLX"]`. SwiftPM may still resolve
 unused optional dependencies; selecting products controls compilation/linking,
 not complete resolution isolation.
-[Changes from older versions →](NativeRuntimeMigration.md)
+[Model setup →](Models.md#setup)

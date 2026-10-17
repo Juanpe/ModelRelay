@@ -1,5 +1,5 @@
-import Foundation
 import AnyLanguageModel
+import Foundation
 import ModelRelay
 import ModelRelayMLX
 
@@ -30,11 +30,12 @@ if modelID == .appleOnDevice {
         print("Apple on-device models require macOS 26 or later.")
         exit(1)
     }
-    if case .unavailable(let reason) = SystemLanguageModel.default.availability {
+    if case let .unavailable(reason) = SystemLanguageModel.default.availability {
         print("Apple on-device model unavailable: \(reason)")
         exit(1)
     }
 }
+
 var catalog = ModelCatalog()
 #if MLX
 catalog.registerMLXModels()
@@ -67,14 +68,20 @@ for r in receipts {
         let o = report.output
         let merchant = o["merchant"]?.textValue.lowercased().contains(r.merchant.lowercased().prefix(6)) == true
         var total = false
-        if case .number(let n)? = o["total"] { total = abs(n - r.total) < 0.005 }
+        if case let .number(n)? = o["total"] { total = abs(n - r.total) < 0.005 }
         let currency = o["currency"]?.textValue == r.currency
         let score = [merchant, total, currency].filter { $0 }.count
         extractScore += score; extractTime.append(ms(report.duration))
-        print(String(format: "  %@  %d/3  %5d ms  %@", score == 3 ? "✓" : "✗", score, ms(report.duration),
-                     o.textValue.replacingOccurrences(of: "\n", with: " · ")))
+        print(String(
+            format: "  %@  %d/3  %5d ms  %@",
+            score == 3 ? "✓" : "✗",
+            score,
+            ms(report.duration),
+            o.textValue.replacingOccurrences(of: "\n", with: " · ")
+        ))
     } catch { print("  ✗ error: \(error)") }
 }
+
 print("\nClassify (urgent · later)")
 var classifyScore = 0, classifyTime: [Int] = []
 for m in messages {
@@ -85,6 +92,7 @@ for m in messages {
         print(String(format: "  %@  %5d ms  %@ → %@", ok ? "✓" : "✗", ms(report.duration), String(m.text.prefix(48)), report.output.textValue))
     } catch { print("  ✗ error: \(error)") }
 }
+
 func median(_ v: [Int]) -> Int { v.isEmpty ? 0 : v.sorted()[v.count / 2] }
 print("\nSummary")
 print("  extract  \(extractScore)/\(receipts.count * 3) fields   median \(median(extractTime)) ms")

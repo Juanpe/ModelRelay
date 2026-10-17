@@ -48,9 +48,14 @@ actor ExecutionResources {
     func snapshot() -> [CheckpointConversation] {
         var saved = restored
         for (key, conversation) in conversations {
-            saved[key] = CheckpointConversation(name: key.name, model: key.model,
-                transcript: conversation.session.transcript, data: privacy[key] ?? .unrestricted)
+            saved[key] = CheckpointConversation(
+                name: key.name,
+                model: key.model,
+                transcript: conversation.session.transcript,
+                data: privacy[key] ?? .unrestricted
+            )
         }
+
         return saved.values.sorted {
             $0.name == $1.name ? $0.model.rawValue < $1.model.rawValue : $0.name < $1.name
         }
@@ -69,17 +74,23 @@ actor ExecutionResources {
     }
 
     func historyPolicy(_ context: StepContext?, models: [ModelID]) -> WorkflowExecutionPolicy.DataAccess {
-        guard case .conversation(let name) = context else { return .unrestricted }
+        guard case let .conversation(name) = context else { return .unrestricted }
         return models.reduce(.unrestricted) { $0.combined(with: privacy[Key(name: name, model: $1)] ?? .unrestricted) }
     }
 
-    func acquire(_ context: StepContext?, model id: ModelID, backend: any LanguageModel,
-                 tools: [any Tool], data: WorkflowExecutionPolicy.DataAccess, step: String) throws -> NativeConversation {
-        let key: Key?
-        if case .conversation(let name) = context { key = Key(name: name, model: id) } else { key = nil }
+    func acquire(
+        _ context: StepContext?,
+        model id: ModelID,
+        backend: any LanguageModel,
+        tools: [any Tool],
+        data: WorkflowExecutionPolicy.DataAccess,
+        step: String
+    ) throws -> NativeConversation {
+        let key: Key? = if case let .conversation(name) = context { Key(name: name, model: id) } else { nil }
         if let key, busy.contains(key) {
             throw RelayError.invalidContext(step: step, reason: "a conversation cannot run concurrently")
         }
+
         let conversation: NativeConversation
         if let key, let existing = conversations[key] { conversation = existing }
         else {
@@ -96,26 +107,33 @@ actor ExecutionResources {
                 session = LanguageModelSession(model: backend, tools: tools, transcript: history)
                 state = nil
             }
+
             session.transcriptErrorHandlingPolicy = .revertTranscript
             conversation = NativeConversation(session: session, tools: state)
             if let key { conversations[key] = conversation; restored.removeValue(forKey: key) }
         }
+
         conversation.tools?.tools = tools
         if let key {
             busy.insert(key)
             // Restrict even on failure: a provider/session may have seen data.
             privacy[key] = (privacy[key] ?? .unrestricted).combined(with: data)
         }
+
         return conversation
     }
 
     func release(_ context: StepContext?, model: ModelID, conversation: NativeConversation) {
         conversation.tools?.tools = []
-        if case .conversation(let name) = context {
+        if case let .conversation(name) = context {
             let key = Key(name: name, model: model)
             if conversation.tools == nil {
-                restored[key] = CheckpointConversation(name: name, model: model,
-                    transcript: conversation.session.transcript, data: privacy[key] ?? .unrestricted)
+                restored[key] = CheckpointConversation(
+                    name: name,
+                    model: model,
+                    transcript: conversation.session.transcript,
+                    data: privacy[key] ?? .unrestricted
+                )
                 conversations.removeValue(forKey: key)
             }
             busy.remove(key)
@@ -129,9 +147,18 @@ actor ExecutionResources {
     }
 
     func finish() async {
-        for resource in models.values { await resource.finish() }
-        for resource in decisions.values { await resource.finish() }
-        for conversation in conversations.values { conversation.tools?.tools = [] }
+        for resource in models.values {
+            await resource.finish()
+        }
+
+        for resource in decisions.values {
+            await resource.finish()
+        }
+
+        for conversation in conversations.values {
+            conversation.tools?.tools = []
+        }
+
         models.removeAll(); decisions.removeAll(); conversations.removeAll(); privacy.removeAll(); busy.removeAll(); restored.removeAll()
     }
 }

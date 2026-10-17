@@ -17,17 +17,21 @@ public struct URLSessionRequestPerformer: RequestPerformer {
     public func perform(_ request: PreparedRequest) async throws -> HTTPResponse {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method.rawValue
+
         for header in request.headers {
             urlRequest.setValue(header.value, forHTTPHeaderField: header.name)
         }
+
         if let body = request.body {
             urlRequest.httpBody = body
             if urlRequest.value(forHTTPHeaderField: "Content-Type") == nil, Self.looksLikeJSON(body) {
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
         }
+
         let (data, response) = try await session.data(for: urlRequest, delegate: SameHostRedirects(origin: request.url))
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
         return HTTPResponse(status: status, body: data)
     }
 
@@ -44,8 +48,12 @@ private final class SameHostRedirects: NSObject, URLSessionTaskDelegate {
         self.origin = origin
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest) async -> URLRequest? {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
         guard let url = request.url, url.host() == origin.host(), url.scheme == origin.scheme else { return nil }
         return request
     }

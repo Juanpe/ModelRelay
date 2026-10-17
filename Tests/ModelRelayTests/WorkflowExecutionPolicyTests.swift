@@ -6,7 +6,7 @@ import Testing
 
 private func policyFailure(_ operation: () async throws -> WorkflowExecutionReport) async {
     do { _ = try await operation(); Issue.record("Expected a policy violation") }
-    catch RelayError.policyViolation { }
+    catch RelayError.policyViolation {}
     catch { Issue.record("Unexpected error: \(error)") }
 }
 
@@ -16,10 +16,12 @@ private final class PolicyServer: ToolServerConnector, ToolServerConnection {
     func connect(to kit: ToolKit) async throws -> any ToolServerConnection {
         connects.withLock { $0 += 1 }; return self
     }
+
     func tools() async throws -> [ServerTool] {
         [.init(name: "read", description: "Read.", changesSomething: false),
          .init(name: "write", description: "Write.", changesSomething: true)]
     }
+
     func call(_ tool: String, arguments: [String: Value]) async throws -> Value {
         calls.withLock { $0 += 1 }; return .text("done")
     }
@@ -267,7 +269,7 @@ private final class PolicyServer: ToolServerConnector, ToolServerConnection {
         let log = ToolCallLog(limit: 6)
         let spec = AgentTool(name: "write", description: "Write", request: HTTPRequest(.post, url: "https://example.test"))
         let tool = RequestTool(spec: spec, step: "old", context: RequestContext(requests: server, secrets: nil, writePolicy: .allow,
-            timeout: .seconds(1)), log: log, resolve: { _ in nil })
+                                                                                timeout: .seconds(1)), log: log, resolve: { _ in nil })
         log.finish()
         await #expect(throws: InvalidOutput.self) { try await tool.call(arguments: AnyLanguageModel.GeneratedContent(json: "{}")) }
         #expect(server.requests.isEmpty)

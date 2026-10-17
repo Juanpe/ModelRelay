@@ -43,8 +43,11 @@ import Testing
                  "code": {{expense.code}}, "chat": {{secret.CHAT}}, "missing": {{expense.nothing}}}
                 """))),
         ])
-        let executor = WorkflowExecutor(requests: api, secrets: FakeSecrets(values: ["CHAT": "123456"]),
-                                    writePolicy: .allow)
+        let executor = WorkflowExecutor(
+            requests: api,
+            secrets: FakeSecrets(values: ["CHAT": "123456"]),
+            writePolicy: .allow
+        )
         _ = try await executor.run(workflow, input: .text(""))
         let body = try #require(api.requests.first?.body)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -55,7 +58,7 @@ import Testing
         #expect(json["note"] as? String == #"Paid 8.3 at Blue "Bottle""#)
         #expect(json["who"] as? String == #"Blue "Bottle""#)
         #expect(json["code"] as? String == "08")
-        #expect(json["chat"] as? Int == 123456)
+        #expect(json["chat"] as? Int == 123_456)
         #expect(json["missing"] is NSNull)
         #expect(String(decoding: body, as: UTF8.self).contains(#""total": 8.3,"#))
     }

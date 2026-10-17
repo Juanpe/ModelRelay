@@ -13,6 +13,7 @@ public struct WorkflowExecutionPolicy: Codable, Sendable, Hashable {
         case unrestricted, localOnly
         func combined(with other: Self) -> Self { self == .localOnly || other == .localOnly ? .localOnly : .unrestricted }
     }
+
     public enum ToolAccess: String, Codable, Sendable, Hashable {
         case allowed, readOnly, denied
     }
@@ -32,10 +33,9 @@ public struct WorkflowExecutionPolicy: Codable, Sendable, Hashable {
     public static let noTools = Self(tools: .denied)
 
     func combined(with other: Self) -> Self {
-        let access: ToolAccess
-        if tools == .denied || other.tools == .denied { access = .denied }
-        else if tools == .readOnly || other.tools == .readOnly { access = .readOnly }
-        else { access = .allowed }
+        let access: ToolAccess = if tools == .denied || other.tools == .denied { .denied }
+        else if tools == .readOnly || other.tools == .readOnly { .readOnly }
+        else { .allowed }
         return Self(data: data.combined(with: other.data), tools: access)
     }
 

@@ -64,8 +64,10 @@ public final class WorkflowExecutionStream<Output: Sendable>: AsyncSequence, Sen
         private let execution: WorkflowExecutionStream
         private var iterator: AsyncThrowingStream<Element, any Error>.AsyncIterator
 
-        fileprivate init(execution: WorkflowExecutionStream,
-                         iterator: AsyncThrowingStream<Element, any Error>.AsyncIterator) {
+        fileprivate init(
+            execution: WorkflowExecutionStream,
+            iterator: AsyncThrowingStream<Element, any Error>.AsyncIterator
+        ) {
             self.execution = execution
             self.iterator = iterator
         }
