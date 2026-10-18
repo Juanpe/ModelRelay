@@ -22,11 +22,6 @@ Built on [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel)
 for inference and conversations. ModelRelay adds the workflow around them.
 Your app brings the interface, data and storage.
 
-> 📱 **Prefer a ready-made app?** [Runline](https://runline.juanpecatalan.com/)
-> is a native app for iPhone, iPad and Mac built on ModelRelay. Build model
-> workflows visually and run them from Shortcuts. Runline is currently under
-> review by Apple and is not yet available on the App Store.
-
 Let's build something 🙂
 
 <p align="center">
@@ -38,6 +33,7 @@ Let's build something 🙂
   <a href="#use-cases">💡 Use cases</a> ·
   <a href="#advanced">🛠 Advanced</a> ·
   <a href="#guides">📚 Guides</a> ·
+  <a href="#runline">📱 Runline app</a> ·
   <a href="#contributing">❤️ Contributing</a>
 </p>
 
@@ -418,6 +414,25 @@ These commands use real models. Enable local MLX with `--traits MLX`
 before the executable name; model weights may download on first use.
 The HTTP server binds to `127.0.0.1`.
 [Model-free example →](Examples/StandaloneClient)
+
+<a name="runline"></a>
+
+## 📱 Runline: the app built on ModelRelay
+
+<p>
+  <a href="https://runline.juanpecatalan.com/">
+    <img src=".github/assets/runline-icon.png" alt="Runline app logo" width="128" height="128">
+  </a>
+</p>
+
+Prefer a ready-made app? **Runline** is a native app for iPhone, iPad and Mac
+built on ModelRelay. Create model workflows visually, choose a model for each
+step and run them from Shortcuts.
+
+Runline is currently under review by Apple and is not yet available on the
+App Store.
+
+🌐 **Website:** [runline.juanpecatalan.com](https://runline.juanpecatalan.com/)
 
 <a name="contributing"></a>
 
