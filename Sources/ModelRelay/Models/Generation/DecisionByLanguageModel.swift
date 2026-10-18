@@ -42,7 +42,6 @@ enum DecisionByLanguageModel {
                     throw InvalidOutput(reason: "\(question.name) isn't one of the levels")
                 }
                 return Answer(name: question.name, result: .score(Double(index), level: levels[index]))
-                
             }
         }
     }

@@ -4,7 +4,9 @@
 
 ## [Unreleased]
 
-First release target: **0.1.0**. No release tag has been published yet.
+## [0.1.0] - 2026-10-18
+
+First public release.
 
 ### Added
 
@@ -12,14 +14,10 @@ First release target: **0.1.0**. No release tag has been published yet.
 - Per-step models, named conversations and explicit handoffs through AnyLanguageModel.
 - HTTP tools, MCP/OAuth helpers, Jev decisions and opt-in MLX presets.
 - Execution updates, reports, budgets, privacy/write policies and recoverable checkpoints.
+- Shared HTTP response handling with protocol-specific OAuth and MCP errors.
+- Cloud models own their HTTP session: pass `session:` to `DecisionsAPIModel` to share one or
+  inject a test transport. Equality and hashing include that session's identity.
 - Support for iOS 18, macOS 15 and visionOS 2, with newer Apple features availability-gated.
 
-### Improved
-
-- Shared HTTP response handling with protocol-specific OAuth and MCP errors.
-- Instance-owned cloud HTTP clients with injectable sessions, without mutable global transport state.
-
-### Changed
-
-- `DecisionsAPIModel` equality and hashing now include its HTTP session identity.
-  Reuse the same session when models should compare equal; existing initializer calls remain valid.
+[Unreleased]: https://github.com/Juanpe/ModelRelay/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/Juanpe/ModelRelay/releases/tag/0.1.0

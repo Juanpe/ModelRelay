@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Changelog](../CHANGELOG.md)
 
-First release target: **0.1.0**. The API is still evolving; `1.0.0` will mark
+The first release is **0.1.0**. The API is still evolving; `1.0.0` will mark
 the stable public contract. All products ship together with the same version.
 
 ## 🔢 Pick the version

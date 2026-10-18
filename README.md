@@ -126,9 +126,6 @@ let package = Package(
 )
 ```
 
-> 🚧 The first release, `0.1.0`, is being prepared; its tag is not published yet.
-> Until then, replace the version range with `branch: "main"`.
-
 Releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 During `0.x`, patch updates stay compatible; breaking changes require a new
 minor version. The range above accepts `0.1.x`, not `0.2.0`.
