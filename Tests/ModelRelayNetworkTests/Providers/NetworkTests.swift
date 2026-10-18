@@ -10,12 +10,14 @@ import UniformTypeIdentifiers
 @testable import ModelRelayCloud
 
 @Suite(.serialized) struct NetworkTests {
+    let session: URLSession
+
     init() {
         StubProtocol.sent = []
         StubProtocol.queue = []
         StubProtocol.headerQueue = []
         StubProtocol.responseIsHTTP = true
-        CloudHTTP.session.withLock { $0 = URLSession(configuration: StubProtocol.configuration()) }
+        session = URLSession(configuration: StubProtocol.configuration())
     }
 
     private func receipt(model: ModelID) -> Workflow {
@@ -109,7 +111,7 @@ import UniformTypeIdentifiers
 
     @Test func decisionProviderAuthenticationIsTypedAndDoesNotEchoTheKey() async throws {
         StubProtocol.reply = (401, #"{"error":{"message":"Rejected jev-private-key"}}"#)
-        let model = DecisionsAPIModel(apiKey: "jev-private-key", baseURL: URL(string: "https://decisions.test/v1")!)
+        let model: DecisionsAPIModel = .init(apiKey: "jev-private-key", baseURL: URL(string: "https://decisions.test/v1")!, session: session)
         let workflow = Workflow("Decision auth") {
             Step.decide("decision", questions: [Question("yes", "Yes?", .yesNo)], model: "decision")
         }
@@ -126,7 +128,7 @@ import UniformTypeIdentifiers
 
     @Test func decisionsAPIAsksTypedQuestionsAndReadsProbabilities() async throws {
         StubProtocol.reply = (200, #"{"answers": [{"type": "predicate", "name": "damaged", "probability": 0.95}, {"type": "choice", "name": "queue", "choice": "shipping", "confidence": 0.81}, {"type": "score", "name": "urgency", "score": 1.3, "confidence": 0.62}]}"#)
-        let model = DecisionsAPIModel(apiKey: "gw-test", zeroDataRetention: true)
+        let model: DecisionsAPIModel = .init(apiKey: "gw-test", zeroDataRetention: true, session: session)
         let answers = try await model.decide([
             Question("damaged", "Damaged?", .yesNo),
             Question("queue", "Which team?", .choice([.init("billing", description: "Refunds"), .init("shipping")])),
@@ -148,7 +150,7 @@ import UniformTypeIdentifiers
     @Test func aRefusedQuestionFails() async throws {
         StubProtocol.reply = (200, #"{"answers": [{"type": "refusal", "name": "damaged"}]}"#)
         await #expect(throws: CloudModelError.self) {
-            try await DecisionsAPIModel(apiKey: "k").decide([Question("damaged", "Damaged?", .yesNo)], about: "x")
+            try await DecisionsAPIModel(apiKey: "k", session: session).decide([Question("damaged", "Damaged?", .yesNo)], about: "x")
         }
     }
 

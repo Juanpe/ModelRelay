@@ -1,7 +1,6 @@
 import Foundation
 import ModelRelay
 import ModelRelayHTTP
-import Synchronization
 
 /// What a cloud model call failed with. Never contains the API key.
 public struct CloudModelError: Error, CustomStringConvertible, Sendable, WorkflowFailureClassifiable {
@@ -19,12 +18,15 @@ public struct CloudModelError: Error, CustomStringConvertible, Sendable, Workflo
     }
 }
 
-enum CloudHTTP {
-    /// Tests swap in a session whose protocol answers locally.
-    static let session = Mutex(URLSession(configuration: .ephemeral))
+struct CloudHTTP: Sendable, Hashable {
+    private let session: URLSession
 
-    static func postJSON(_ url: URL, headers: [String: String], body: [String: Any]) async throws -> [String: Any] {
-        var request = URLRequest(url: url)
+    init(session: URLSession) {
+        self.session = session
+    }
+
+    func postJSON(_ url: URL, headers: [String: String], body: [String: Any]) async throws -> [String: Any] {
+        var request: URLRequest = .init(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -34,7 +36,6 @@ enum CloudHTTP {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let session = session.withLock { $0 }
         let data: Data
         let response: URLResponse
 

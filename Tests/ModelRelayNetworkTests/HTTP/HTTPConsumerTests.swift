@@ -31,7 +31,7 @@ extension NetworkTests {
         let url: URL = try #require(URL(string: "https://decisions.test"))
 
         do {
-            _ = try await CloudHTTP.postJSON(url, headers: [:], body: [:])
+            _ = try await CloudHTTP(session: session).postJSON(url, headers: [:], body: [:])
             Issue.record("Expected the HTTP error")
         } catch let error as CloudModelError {
             #expect(error.status == status)
@@ -47,7 +47,7 @@ extension NetworkTests {
         let url: URL = try #require(URL(string: "https://decisions.test"))
 
         do {
-            _ = try await CloudHTTP.postJSON(url, headers: [:], body: [:])
+            _ = try await CloudHTTP(session: session).postJSON(url, headers: [:], body: [:])
             Issue.record("Expected invalid JSON")
         } catch let error as CloudModelError {
             #expect(error.status == 200)
@@ -60,7 +60,7 @@ extension NetworkTests {
         let url: URL = try #require(URL(string: "https://decisions.test"))
 
         do {
-            _ = try await CloudHTTP.postJSON(url, headers: [:], body: [:])
+            _ = try await CloudHTTP(session: session).postJSON(url, headers: [:], body: [:])
             Issue.record("Expected a non-HTTP response error")
         } catch let error as CloudModelError {
             #expect(error.status == 0)

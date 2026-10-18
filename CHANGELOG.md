@@ -17,3 +17,9 @@ First release target: **0.1.0**. No release tag has been published yet.
 ### Improved
 
 - Shared HTTP response handling with protocol-specific OAuth and MCP errors.
+- Instance-owned cloud HTTP clients with injectable sessions, without mutable global transport state.
+
+### Changed
+
+- `DecisionsAPIModel` equality and hashing now include its HTTP session identity.
+  Reuse the same session when models should compare equal; existing initializer calls remain valid.

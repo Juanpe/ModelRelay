@@ -14,17 +14,21 @@ public struct DecisionsAPIModel: DecisionModel, Hashable, CustomStringConvertibl
     /// On AI Gateway, only route to providers that keep no data. Vercel offers
     /// it on Pro and Enterprise plans and refuses it (HTTP 403) on Hobby.
     public var zeroDataRetention: Bool
+    private let http: CloudHTTP
 
+    /// Reuses `session` for every call; equality includes that session's identity.
     public init(
         model: String = "typesafe-ai/jev",
         apiKey: String,
         baseURL: URL = DecisionsAPIModel.aiGateway,
-        zeroDataRetention: Bool = false
+        zeroDataRetention: Bool = false,
+        session: URLSession = URLSession(configuration: .ephemeral)
     ) {
         self.model = model
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.zeroDataRetention = zeroDataRetention
+        self.http = CloudHTTP(session: session)
     }
 
     /// Hides the key, so logging a model never prints it.
@@ -34,7 +38,7 @@ public struct DecisionsAPIModel: DecisionModel, Hashable, CustomStringConvertibl
         var body: [String: Any] = [
             "model": model,
             "input": input,
-            "questions": questions.map(Self.json),
+            "questions": questions.map(json),
         ]
         if zeroDataRetention, baseURL.host() == Self.aiGateway.host() {
             body["providerOptions"] = ["gateway": ["zeroDataRetention": true]]
@@ -43,7 +47,7 @@ public struct DecisionsAPIModel: DecisionModel, Hashable, CustomStringConvertibl
         let reply: [String: Any]
 
         do {
-            reply = try await CloudHTTP.postJSON(
+            reply = try await http.postJSON(
                 baseURL.appending(path: "decisions"),
                 headers: ["Authorization": "Bearer \(apiKey)"],
                 body: body
@@ -77,7 +81,7 @@ public struct DecisionsAPIModel: DecisionModel, Hashable, CustomStringConvertibl
         }
     }
 
-    private static func json(_ question: Question) -> [String: Any] {
+    private func json(_ question: Question) -> [String: Any] {
         var json: [String: Any] = ["name": question.name, "instructions": question.instructions]
         switch question.kind {
         case .yesNo:

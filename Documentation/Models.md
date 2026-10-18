@@ -122,6 +122,9 @@ func triageTicket(_ text: String, gatewayKey: String) async throws -> WorkflowEx
 `CloudModels.jev` is a predefined catalog ID, like the IDs in `MLXModels`.
 Provider setup stays explicit; custom aliases such as `"triage"` work too.
 
+Pass `session:` to `DecisionsAPIModel` to share an HTTP session or supply a test
+transport. Otherwise, each model reuses its own ephemeral session.
+
 Read the answers from `report.output["urgent"]`, `["team"]` and `["priority"]`.
 Provider confidence lives under `["confidence"]`; numeric scores under
 `["scores"]`. For yes/no, confidence is the probability of **yes**, not

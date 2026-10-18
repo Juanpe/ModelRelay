@@ -55,6 +55,12 @@ belong in the host, not this package.
   A failing guard requires a design review, not a higher limit.
 - Keep helpers private where possible and internal when shared across files.
   Do not widen public API or introduce global mutable state to make a split work.
+- Treat `static` and `class` members as a last resort. Prefer instances with
+  explicit, immutable dependencies and clear lifetimes. Never use namespace
+  enums, singletons or mutable globals to avoid dependency injection or replace
+  services in tests. Type-level members need a concrete reason, such as a
+  protocol/platform requirement or a genuinely type-wide constant; do not
+  replace them with equivalent hidden global state.
 - Split long functions by meaningful operations. Do not increase lint limits
   or grow the baseline to bypass a required responsibility review.
 
