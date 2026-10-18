@@ -52,12 +52,12 @@ let package = Package(
         ),
         .target(
             name: "ModelRelayCloud",
-            dependencies: ["ModelRelay"],
+            dependencies: ["ModelRelay", "ModelRelayHTTP"],
             swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
         ),
         .target(
             name: "ModelRelayMCP",
-            dependencies: ["ModelRelay"],
+            dependencies: ["ModelRelay", "ModelRelayHTTP"],
             swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
         ),
         .executableTarget(name: "relay-bench", dependencies: ["ModelRelay", "ModelRelayMLX"]),

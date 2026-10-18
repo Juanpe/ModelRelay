@@ -111,7 +111,7 @@ let package = Package(
     name: "MyClient",
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     dependencies: [
-        .package(url: "https://github.com/Juanpe/ModelRelay.git", branch: "main", traits: []),
+        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.1.0" ..< "0.2.0", traits: []),
     ],
     targets: [
         .target(name: "MyClient", dependencies: [
@@ -121,7 +121,13 @@ let package = Package(
 )
 ```
 
-> 📣 This example tracks the development branch. It is not a pinned release.
+> 🚧 The first release, `0.1.0`, is being prepared; its tag is not published yet.
+> Until then, replace the version range with `branch: "main"`.
+
+Releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+During `0.x`, patch updates stay compatible; breaking changes require a new
+minor version. The range above accepts `0.1.x`, not `0.2.0`.
+[Changelog →](CHANGELOG.md) · [Version policy and publishing →](Documentation/Releasing.md)
 
 <details>
 <summary>📦 Which products do I need?</summary>
@@ -389,6 +395,7 @@ use `start` / `resume` with a host-owned checkpoint store.
 | Shared conversations, handoffs, resource reuse and privacy | [Context and policies](Documentation/ContextAndPolicies.md) |
 | Validation, typed errors, events and budget accounting | [Execution safety](Documentation/ExecutionSafety.md) |
 | Checkpoints, approval gates and interrupted operations | [Recoverable executions](Documentation/Recovery.md) |
+| Version numbers, compatibility and publishing | [Releasing ModelRelay](Documentation/Releasing.md) |
 
 ### 🧪 Try it your way
 

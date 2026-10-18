@@ -4,11 +4,10 @@ extension RequestBuilder {
     /// Turns a response into a step value: JSON becomes fields, anything else
     /// text; read as a page, the page's readable text.
     static func value(from response: HTTPResponse, reading: HTTPRequest.Reading? = nil) throws -> Value {
-        guard (200 ..< 300).contains(response.status) else {
-            // The server's own explanation, when it gives one, says why.
-            let detail = errorDetail(response.body).map { ": \($0)" } ?? ""
-            throw HTTPResponseFailure(status: response.status, description: "The server answered HTTP \(response.status)\(detail)")
-        }
+        try response.validateSuccess(or: HTTPResponseFailure(
+            status: response.status,
+            description: "The server answered HTTP \(response.status)" + (errorDetail(response.body).map { ": \($0)" } ?? "")
+        ))
         guard response.body.count <= maxResponseBytes else {
             throw InvalidOutput(reason: "The response is larger than \(maxResponseBytes / 1_000_000) MB")
         }
@@ -33,13 +32,8 @@ extension RequestBuilder {
             return line.count > limit ? String(line.prefix(limit)) + "…" : line
         }
         guard !body.isEmpty, body.count <= maxResponseBytes else { return nil }
-        if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
-            for key in ["description", "message", "error_description", "detail"] {
-                if let text = object[key] as? String { return short(text) }
-            }
-            if let text = object["error"] as? String { return short(text) }
-            if let nested = object["error"] as? [String: Any], let text = nested["message"] as? String { return short(text) }
-            return nil
+        if let object = HTTPResponse.jsonObject(from: body) {
+            return HTTPResponse.errorMessage(in: object).flatMap(short)
         }
         let text = String(decoding: body, as: UTF8.self)
         // An HTML error page says nothing useful in its first characters.

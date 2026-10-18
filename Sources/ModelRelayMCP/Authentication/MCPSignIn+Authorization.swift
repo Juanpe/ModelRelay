@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import ModelRelay
+import ModelRelayHTTP
 
 extension MCPSignIn {
     /// The page to open for one sign-in, with a fresh PKCE verifier and state.
@@ -77,13 +79,17 @@ extension MCPSignIn {
             .joined(separator: "&").utf8)
 
         let (data, response) = try await session.data(for: request)
-        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
-        guard (200 ..< 300).contains((response as? HTTPURLResponse)?.statusCode ?? 0),
-              let access = object["access_token"] as? String
-        else {
-            throw Failure.tokenRefused(object["error_description"] as? String ?? object["error"] as? String ?? "no access token")
+        guard let reply = HTTPResponse(data: data, response: response) else {
+            throw Failure.tokenRefused("not an HTTP response")
         }
+        let object: [String: Any]? = reply.jsonObject
+        let refusal: String? = object.flatMap { HTTPResponse.errorMessage(in: $0, keys: ["error_description", "error"]) }
+
+        try reply.validateSuccess(or: Failure.tokenRefused(refusal ?? "HTTP \(reply.status)"))
+
+        guard let object else { throw Failure.tokenRefused("invalid JSON response") }
+        guard let access = object["access_token"] as? String, !access.isEmpty else { throw Failure.tokenRefused(refusal ?? "no access token") }
 
         let lifetime = (object["expires_in"] as? NSNumber)?.doubleValue
         return Tokens(

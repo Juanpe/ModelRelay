@@ -1,5 +1,6 @@
 import Foundation
 import ModelRelay
+import ModelRelayHTTP
 import Synchronization
 
 /// What a cloud model call failed with. Never contains the API key.
@@ -44,12 +45,16 @@ enum CloudHTTP {
             throw CloudModelError(status: 0, message: "Couldn't reach \(url.host() ?? url.absoluteString): \(error.localizedDescription)")
         }
 
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard let reply = HTTPResponse(data: data, response: response) else {
+            throw CloudModelError(status: 0, message: "The server didn't return an HTTP response")
+        }
+        try reply.validateSuccess(or: CloudModelError(
+            status: reply.status,
+            message: HTTPResponse.errorMessage(in: reply.jsonObject ?? [:], keys: ["error"]) ?? "The server refused the request"
+        ))
 
-        guard (200 ..< 300).contains(status) else {
-            let error = object["error"] as? [String: Any]
-            throw CloudModelError(status: status, message: error?["message"] as? String ?? "The server refused the request")
+        guard let object = reply.jsonObject else {
+            throw CloudModelError(status: reply.status, message: "The server returned an invalid JSON object")
         }
 
         return object

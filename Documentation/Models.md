@@ -22,7 +22,7 @@ let package = Package(
     name: "MyClient",
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     dependencies: [
-        .package(url: "https://github.com/Juanpe/ModelRelay.git", branch: "main", traits: []),
+        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.1.0" ..< "0.2.0", traits: []),
         .package(url: "https://github.com/huggingface/AnyLanguageModel", exact: "1.0.0", traits: []),
     ],
     targets: [
@@ -37,6 +37,8 @@ let package = Package(
 
 `ModelRelayCloud` is only needed for specialized decisions such as Jev.
 Apple's built-ins need only `ModelRelay`; MLX has a separate opt-in below.
+Release availability and development-branch setup are in the
+[installation guide](../README.md#installation).
 
 > 🔒 Pass credentials at runtime, never through workflow JSON or prompts.
 > Keep your service keys on a backend, not bundled in a distributed app.

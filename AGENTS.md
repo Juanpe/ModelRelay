@@ -38,6 +38,10 @@ belong in the host, not this package.
 
 ## 🧱 Responsibilities and file size
 
+- Before adding code, inspect existing components, helpers and related callers.
+  Reuse or extend the right owner before introducing a new implementation.
+  Consolidate repeated behavior without coupling unrelated policies or weakening
+  module boundaries; verify all affected callers when changing shared behavior.
 - Aim for production files around 300 lines; review and split responsibilities
   before exceeding 400. Keep logical spacing and useful comments, not fewer lines.
 - Use feature-named extensions for cohesive facets of the same type. Extract
@@ -88,6 +92,17 @@ belong in the host, not this package.
   Keep working links/anchors when renaming headings.
 - Comments explain non-obvious intent or constraints, not what names already say.
   Prefer one-line type summaries when useful; expand only when needed.
+
+## 🏷 Releases
+
+- Follow [the version policy](Documentation/Releasing.md). All products share
+  one SemVer tag; Git tags are the version source, not a Swift constant.
+- Add user-facing changes to `CHANGELOG.md` under `Unreleased`. Record breaking
+  changes and migrations, including behavioral, Codable and platform contracts.
+- Before 1.0, breaking changes require a minor bump, never a patch. From 1.0,
+  use a major bump. Never move or overwrite a published tag.
+- Publishing tags, GitHub releases or repository visibility requires explicit
+  user authorization. Release metadata checks do not replace Swift tests.
 
 ## 🧪 Checks
 

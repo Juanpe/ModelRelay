@@ -17,6 +17,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var sent: [Sent] = []
     /// Response headers for the queued replies, in the same order.
     nonisolated(unsafe) static var headerQueue: [[String: String]] = []
+    nonisolated(unsafe) static var responseIsHTTP: Bool = true
 
     static func configuration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -28,6 +29,11 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
         var body = request.httpBody ?? Data()
         if body.isEmpty, let stream = request.httpBodyStream {
             stream.open()
@@ -40,7 +46,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             stream.close()
         }
         Self.sent.append(Sent(
-            url: request.url!,
+            url: url,
             method: request.httpMethod ?? "GET",
             headers: request.allHTTPHeaderFields ?? [:],
             body: body
@@ -50,7 +56,16 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let streaming = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["stream"] as? Bool == true
         if streaming { headers["Content-Type"] = "text/event-stream" }
         else if headers["Content-Type"] == nil { headers["Content-Type"] = "application/json" }
-        let response = HTTPURLResponse(url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: headers)!
+        let response: URLResponse
+        if Self.responseIsHTTP {
+            guard let http = HTTPURLResponse(url: url, statusCode: next.status, httpVersion: nil, headerFields: headers) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                return
+            }
+            response = http
+        } else {
+            response = URLResponse(url: url, mimeType: "application/json", expectedContentLength: -1, textEncodingName: nil)
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: streaming ? ProviderStreamFixture.data(from: Self.providerEnvelope(next.body)) : Self.providerEnvelope(next.body))
         client?.urlProtocolDidFinishLoading(self)

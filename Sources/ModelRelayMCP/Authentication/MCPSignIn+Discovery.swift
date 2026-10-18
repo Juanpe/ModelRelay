@@ -1,4 +1,6 @@
 import Foundation
+import ModelRelay
+import ModelRelayHTTP
 
 extension MCPSignIn {
     /// Reads the server's protected-resource metadata (from its 401
@@ -74,9 +76,10 @@ extension MCPSignIn {
 
         let (data, response) = try await session.data(for: request)
 
-        guard (200 ..< 300).contains((response as? HTTPURLResponse)?.statusCode ?? 0),
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = object["client_id"] as? String else { throw Failure.cantRegister }
+        guard let reply = HTTPResponse(data: data, response: response) else { throw Failure.cantRegister }
+        try reply.validateSuccess(or: Failure.cantRegister)
+
+        guard let object = reply.jsonObject, let id = object["client_id"] as? String, !id.isEmpty else { throw Failure.cantRegister }
 
         return Client(id: id, secret: object["client_secret"] as? String)
     }
@@ -114,11 +117,10 @@ extension MCPSignIn {
 
         let (data, response) = try await session.data(for: request)
 
-        guard (200 ..< 300).contains((response as? HTTPURLResponse)?.statusCode ?? 0),
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw Failure.noAuthorizationServer
-        }
+        guard let reply = HTTPResponse(data: data, response: response) else { throw Failure.noAuthorizationServer }
+        try reply.validateSuccess(or: Failure.noAuthorizationServer)
+
+        guard let object = reply.jsonObject else { throw Failure.noAuthorizationServer }
 
         return object
     }

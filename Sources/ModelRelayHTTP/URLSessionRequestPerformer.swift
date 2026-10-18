@@ -30,9 +30,9 @@ public struct URLSessionRequestPerformer: RequestPerformer {
         }
 
         let (data, response) = try await session.data(for: urlRequest, delegate: SameHostRedirects(origin: request.url))
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard let reply = HTTPResponse(data: data, response: response) else { throw URLError(.badServerResponse) }
 
-        return HTTPResponse(status: status, body: data)
+        return reply
     }
 
     private static func looksLikeJSON(_ body: Data) -> Bool {

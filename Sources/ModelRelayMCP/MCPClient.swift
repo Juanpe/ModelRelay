@@ -1,5 +1,6 @@
 import Foundation
 import ModelRelay
+import ModelRelayHTTP
 
 /// One session with an MCP server: `initialize`, then `tools/list` and
 /// `tools/call` as JSON-RPC over HTTP POST. Replies may be JSON or a stream
@@ -73,13 +74,13 @@ public actor MCPClient: ToolServerConnection {
         nextID += 1
 
         let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
-        let (data, response) = try await post(message)
+        let response: HTTPResponse = try await post(message)
 
-        if method == "initialize", let header = response.value(forHTTPHeaderField: "Mcp-Session-Id") {
+        if method == "initialize", let header = response.header(named: "Mcp-Session-Id") {
             sessionID = header
         }
 
-        guard let reply = try MCPMessages.reply(to: id, in: data, contentType: response.value(forHTTPHeaderField: "Content-Type")) else {
+        guard let reply = try MCPMessages.reply(to: id, in: response.body, contentType: response.header(named: "Content-Type")) else {
             throw MCPError.invalidResponse("no reply to \(method)")
         }
 
@@ -94,7 +95,7 @@ public actor MCPClient: ToolServerConnection {
         _ = try await post(["jsonrpc": "2.0", "method": method])
     }
 
-    private func post(_ message: [String: Any]) async throws -> (Data, HTTPURLResponse) {
+    private func post(_ message: [String: Any]) async throws -> HTTPResponse {
         var request = URLRequest(url: url, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -116,18 +117,16 @@ public actor MCPClient: ToolServerConnection {
             throw MCPError.server("couldn't reach \(url.host() ?? url.absoluteString): \(error.localizedDescription)")
         }
 
-        guard let http = response as? HTTPURLResponse else { throw MCPError.invalidResponse("not HTTP") }
-        if http.statusCode == 401 {
-            throw MCPError.needsSignIn(challenge: http.value(forHTTPHeaderField: "WWW-Authenticate"))
+        guard let reply = HTTPResponse(data: data, response: response) else { throw MCPError.invalidResponse("not HTTP") }
+        if reply.status == HTTPResponse.unauthorizedStatus {
+            throw MCPError.needsSignIn(challenge: reply.header(named: "WWW-Authenticate"))
         }
 
-        guard (200 ..< 300).contains(http.statusCode) else {
-            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            let message = (object?["error"] as? [String: Any])?["message"] as? String
-                ?? object?["error_description"] as? String ?? object?["message"] as? String ?? ""
-            throw MCPError.http(status: http.statusCode, message: message)
-        }
+        try reply.validateSuccess(or: MCPError.http(
+            status: reply.status,
+            message: HTTPResponse.errorMessage(in: reply.jsonObject ?? [:], keys: ["error", "error_description", "message"]) ?? ""
+        ))
 
-        return (data, http)
+        return reply
     }
 }

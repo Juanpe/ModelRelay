@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
         StubProtocol.sent = []
         StubProtocol.queue = []
         StubProtocol.headerQueue = []
+        StubProtocol.responseIsHTTP = true
         CloudHTTP.session.withLock { $0 = URLSession(configuration: StubProtocol.configuration()) }
     }
 

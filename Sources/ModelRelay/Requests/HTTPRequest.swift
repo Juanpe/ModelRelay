@@ -70,16 +70,6 @@ public struct PreparedRequest: Sendable, CustomStringConvertible {
     }
 }
 
-public struct HTTPResponse: Sendable {
-    public var status: Int
-    public var body: Data
-
-    public init(status: Int, body: Data) {
-        self.status = status
-        self.body = body
-    }
-}
-
 /// Sends prepared requests. ModelRelay has no network code of its own; apps
 /// pass `URLSessionRequestPerformer` from ModelRelayHTTP, tests pass a fake.
 public protocol RequestPerformer: Sendable {
