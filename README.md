@@ -232,7 +232,7 @@ the reply. Each step chooses a registered model ID; the workflow stays the same.
 
 | Want to use… | Register… | Example |
 | --- | --- | --- |
-| 🗳 **Jev** | `DecisionsAPIModel` from `ModelRelayCloud` | [Route and score a ticket](Documentation/Models.md#jev) |
+| 🗳 **Jev** | `CloudModels.jev` + `DecisionsAPIModel` from `ModelRelayCloud` | [Route and score a ticket](Documentation/Models.md#jev) |
 | 🦙 **Ollama** | Native `OllamaLanguageModel` | [Summarize with Qwen](Documentation/Models.md#ollama) |
 | ☁️ **OpenAI / Anthropic** | Native `OpenResponsesLanguageModel` / `AnthropicLanguageModel` | [Cloud providers](Documentation/Models.md#cloud) |
 | 🔌 **OpenAI-compatible servers** | Native `OpenAILanguageModel` with your base URL | [Bring an endpoint](Documentation/Models.md#compatible-servers) |
@@ -343,10 +343,10 @@ let executor = WorkflowExecutor(limits: .init(
 ))
 
 let issues = await executor.validate(workflow)
-let execution = executor.stream(workflow, input: .text("Your input"))
+let execution = executor.execute(workflow, input: .text("Your input"))
 defer { execution.cancel() }
 
-for try await update in execution {
+for try await update in execution.updates {
     switch update {
     case .event(let event): print(event.kind.rawValue, event.step ?? "")
     case .step(let record): print("Finished", record.step)

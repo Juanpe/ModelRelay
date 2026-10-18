@@ -4,6 +4,17 @@ Open-source Swift SDK (MIT) for composing language-model workflows on
 AnyLanguageModel. Client UI, accounts, storage and sign-in presentation
 belong in the host, not this package.
 
+## 🗂 Layout
+
+- `Sources/ModelRelay/`: `Workflow` definitions/DSL, `Execution` orchestration,
+  `Models` providers/schemas, `Tools`, `Requests`, `Values` and `Errors`.
+- Execution's `Steps`, `Runtime` and `Recovery` group its implementations.
+  MCP separates protocol parsing from authentication.
+- Tests mirror features; shared test doubles live in `Support`. Keep related
+  test facets in named extensions without changing suite isolation.
+- Keep folders shallow and feature-owned. No catch-all `Common` or `Utils`
+  folders, parallel public/internal trees, or extra targets just for organization.
+
 ## 🧭 Rules
 
 1. Keep public API small and documented. No SwiftUI, App Intents or
@@ -24,6 +35,24 @@ belong in the host, not this package.
    Non-GET writes require an explicit `WritePolicy` and are never retried.
 9. Expose progress through async sequences, not notification callbacks.
    Keep cancellation, final results and metadata-only events explicit.
+
+## 🧱 Responsibilities and file size
+
+- Aim for production files around 300 lines; review and split responsibilities
+  before exceeding 400. Keep logical spacing and useful comments, not fewer lines.
+- Use feature-named extensions for cohesive facets of the same type. Extract
+  a helper type when it owns a separate responsibility or state; do not create
+  numbered parts or a catch-all utilities file just to satisfy the line limit.
+- Keep `WorkflowExecutor` an actor coordinator. Model requests, execution state
+  and recovery mechanics have focused internal implementations; resources and
+  conversations remain execution-local.
+- `ExecutionArchitectureTests` recursively caps production/test files at 400
+  lines and the executor facade at 200; core files belong in feature folders.
+  A failing guard requires a design review, not a higher limit.
+- Keep helpers private where possible and internal when shared across files.
+  Do not widen public API or introduce global mutable state to make a split work.
+- Split long functions by meaningful operations. Do not increase lint limits
+  or grow the baseline to bypass a required responsibility review.
 
 ## 🎨 Swift style
 

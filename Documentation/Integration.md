@@ -13,7 +13,8 @@ you keep the interface, accounts and storage.
 
 Build a `Workflow`, pass a `Value`, then call `WorkflowExecutor.run`.
 You receive a `WorkflowExecutionReport` or a typed error.
-Use `stream` when you also want live progress, then await `execution.result`.
+Use `execute` for live progress through `execution.updates`, then await
+`execution.result`.
 
 | Integration | You supply | Optional implementation |
 | --- | --- | --- |

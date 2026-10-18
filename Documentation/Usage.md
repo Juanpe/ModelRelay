@@ -270,6 +270,7 @@ Need yes/no, choices or scores rather than a generated paragraph?
 
 ```swift
 import ModelRelay
+import ModelRelayCloud
 
 let workflow = Workflow(
     name: "Triage ticket"
@@ -278,11 +279,11 @@ let workflow = Workflow(
         Question("damaged", "Does the customer report a damaged item?", .yesNo),
         Question("team", "Which team should handle it?", .choice([.init("billing"), .init("shipping")])),
         Question("urgency", "How urgent is it?", .score(["low", "medium", "high"])),
-    ], model: "jev", fallback: .appleOnDevice)
+    ], model: CloudModels.jev, fallback: .appleOnDevice)
 }
 ```
 
-Register `"jev"` using the [Jev setup example](Models.md#jev).
+Register `CloudModels.jev` using the [Jev setup example](Models.md#jev).
 A language model can answer the same questions through guided generation,
 including as an available on-device fallback, without Jev's probabilities.
 

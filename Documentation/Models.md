@@ -99,7 +99,7 @@ import ModelRelay
 import ModelRelayCloud
 
 func triageTicket(_ text: String, gatewayKey: String) async throws -> WorkflowExecutionReport {
-    let catalog = ModelCatalog().registering(decisions: "jev", location: .remote) {
+    let catalog = ModelCatalog().registering(decisions: CloudModels.jev, location: .remote) {
         DecisionsAPIModel(apiKey: gatewayKey)
     }
     let workflow = Workflow(
@@ -111,11 +111,14 @@ func triageTicket(_ text: String, gatewayKey: String) async throws -> WorkflowEx
                 .init("billing"), .init("technical"), .init("review"),
             ])),
             Question("priority", "How urgent is it?", .score(["low", "medium", "high"])),
-        ], model: "jev")
+        ], model: CloudModels.jev)
     }
     return try await WorkflowExecutor(catalog: catalog).run(workflow, input: .text(text))
 }
 ```
+
+`CloudModels.jev` is a predefined catalog ID, like the IDs in `MLXModels`.
+Provider setup stays explicit; custom aliases such as `"triage"` work too.
 
 Read the answers from `report.output["urgent"]`, `["team"]` and `["priority"]`.
 Provider confidence lives under `["confidence"]`; numeric scores under

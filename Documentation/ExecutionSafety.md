@@ -73,10 +73,10 @@ fallback; a timeout or cancellation also does not prove a write never happened.
 ## 📡 Stream progress
 
 ```swift
-let execution = executor.stream(workflow, input: input)
+let execution = executor.execute(workflow, input: input)
 defer { execution.cancel() }
 
-for try await update in execution {
+for try await update in execution.updates {
     switch update {
     case .event(let event): print(event.kind.rawValue, event.step ?? "")
     case .step(let record): print("Finished", record.step)
@@ -86,18 +86,20 @@ for try await update in execution {
 let report = try await execution.result
 ```
 
-`WorkflowExecutionStream` wraps an `AsyncThrowingStream`. Updates are
-`.event` metadata or `.step` records, which can contain user input/output.
+`WorkflowExecution` owns the running task, its `result` and cancellation.
+`updates` is a native `AsyncThrowingStream<WorkflowExecutionUpdate, any Error>`,
+not a custom sequence. Updates are `.event` metadata or `.step` records,
+which can contain user input/output.
 A failed step yields its record before iteration throws the original error;
 `result` throws the same error, retaining its typed cause.
 
 | Only need the result | Also need live updates |
 | --- | --- |
-| `run` | `stream` |
-| `start` | `startStream` |
-| `resume` | `resumeStream` |
+| `run` | `execute` |
+| `start` | `startExecution` |
+| `resume` | `resumeExecution` |
 
-Streams start immediately and have one consumer, not broadcast subscribers.
+Executions start immediately. Their updates have one consumer, not broadcast subscribers.
 Awaiting `result` neither consumes updates nor executes work again.
 Updates buffer without dropping; a slow consumer can grow the backlog in
 memory. Use the direct API if you do not need progress.
@@ -119,12 +121,17 @@ checkpoint saves and exhausted limits. Host-defined names can still be sensitive
 - Step records are enqueued before the post-step save; consumption may happen
   later. `checkpointSaved` is emitted only after successful store acknowledgement.
 
-Cancellation while awaiting an update cancels execution. Call
-`execution.cancel()` to stop it explicitly, then await `result` for cooperative
-cleanup. Releasing the last stream/iterator also requests cancellation.
-Use `defer` so a `break` or an error in your loop body stops retained work.
-Cancelling a task awaiting `result` cancels execution too.
-Finishing updates does not discard the result.
+Keep the execution handle alive while consuming updates. Releasing it requests
+cancellation, even if you retained a copy of `updates` or its iterator.
+Use `defer { execution.cancel() }` so a `break` or an error in your loop body
+stops retained work.
+
+Cancellation while awaiting an update cancels execution through the native
+stream's termination handler; iteration can end normally on cancellation.
+Call `execution.cancel()` to stop explicitly, then await `result` to wait for
+cooperative cleanup and observe success or failure.
+Cancelling a task awaiting `result` cancels execution too. Finishing updates
+does not discard the result.
 
 > 📣 Events are not token streaming or a durable journal. A process can die
 > after commit but before notification. If a save fails, reload the store:

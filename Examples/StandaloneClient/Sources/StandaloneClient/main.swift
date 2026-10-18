@@ -24,13 +24,13 @@ guard workflow.referenceIssues.isEmpty else {
 let executor = WorkflowExecutor()
 let issues = await executor.validate(workflow)
 precondition(issues.isEmpty)
-let execution = executor.stream(
+let execution = executor.execute(
     workflow,
     input: .text("Small models can power focused workflows."),
     limits: .init(maxModelCalls: usesApple ? 1 : 0, maxToolCalls: 0, maxConcurrentSteps: 2)
 )
 defer { execution.cancel() }
-for try await update in execution {
+for try await update in execution.updates {
     switch update {
     case let .step(record): print("Finished \(record.step)")
     case let .event(event):
