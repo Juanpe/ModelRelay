@@ -22,6 +22,11 @@ Built on [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel)
 for inference and conversations. ModelRelay adds the workflow around them.
 Your app brings the interface, data and storage.
 
+> 📱 **Prefer a ready-made app?** [Runline](https://runline.juanpecatalan.com/)
+> is a native app for iPhone, iPad and Mac built on ModelRelay. Build model
+> workflows visually and run them from Shortcuts. Runline is currently under
+> review by Apple and is not yet available on the App Store.
+
 Let's build something 🙂
 
 <p align="center">
@@ -76,6 +81,10 @@ ModelRelay is for the process around those calls:
 Apple also supports [custom model providers](https://developer.apple.com/documentation/foundationmodels/languagemodel)
 on OS 27+. ModelRelay's value is reusable **workflow orchestration**, not
 exclusive access to tools, structured output or other models.
+
+**Support apps from iOS 18.** ModelRelay's workflows, remote models, tools,
+MCP and checkpoints work on iOS 18 and later. Apple's model features still
+require their supported OS and hardware. [Platform requirements →](#installation)
 
 You could build this coordination yourself. ModelRelay packages it without
 replacing the native inference runtime. It does not make Apple's model
