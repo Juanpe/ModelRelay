@@ -1,0 +1,42 @@
+name: 💡 Feature request
+description: A workflow you'd like to build, or something ModelRelay could make easier.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a workflow in mind? I'd love to hear about it. 🙂
+        Starting from the problem, not the API, helps find the smallest fit.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to build?
+      description: The feature in your app and the steps it needs.
+      placeholder: Read a receipt, extract the total, check it with Swift, then ask for review.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you do it today?
+      description: Your current workaround, or what stops you.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What could it look like?
+      description: An optional sketch of the workflow or API you have in mind.
+      render: swift
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Before you send it
+      options:
+        - label: I checked the [guides](https://github.com/Juanpe/ModelRelay#guides) and existing issues.
+          required: true
+        - label: It belongs in the SDK, not in the host app's UI, storage or accounts.

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Guides
+    url: https://github.com/Juanpe/ModelRelay#guides
+    about: Models, step recipes, integration, safety and recovery.
+  - name: 🧪 Model-free example
+    url: https://github.com/Juanpe/ModelRelay/tree/main/Examples/StandaloneClient
+    about: A runnable workflow without models, keys or UI.
