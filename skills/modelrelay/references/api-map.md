@@ -1,7 +1,7 @@
 # 🗺 ModelRelay API map
 
 Find the API for a need, then open the linked guide. Paths are relative to
-the ModelRelay checkout of the app's resolved version (see SKILL.md, step 1).
+the ModelRelay checkout of the app's resolved version (see SKILL.md, step 2).
 Read signatures in `Sources/` before calling anything not shown in a guide.
 
 ## 🎯 Steps
