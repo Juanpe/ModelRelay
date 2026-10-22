@@ -1,0 +1,81 @@
+name: 🐛 Bug report
+description: Something in ModelRelay doesn't behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! 🙂
+        A small workflow that reproduces the problem helps the most.
+
+        > 🔒 Never paste API keys, tokens, prompts with private data or raw `rootCause` output.
+        > Replace them with placeholders.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal workflow
+      description: The smallest `Workflow` and executor setup that shows the problem.
+      render: swift
+      placeholder: |
+        let workflow = Workflow(
+            name: "Repro"
+        ) {
+            Step.prompt("summary", "Summarize.", model: .appleOnDevice)
+        }
+        let report = try await WorkflowExecutor().run(workflow, input: .text("…"))
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Error or output
+      description: The `RelayError`, `failure.info` or relevant step records.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: ModelRelay version
+      description: From your `Package.resolved`, or a commit for `main`.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: products
+    attributes:
+      label: Products involved
+      multiple: true
+      options:
+        - ModelRelay
+        - ModelRelayHTTP
+        - ModelRelayCloud
+        - ModelRelayMCP
+        - ModelRelayMLX
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model provider
+      description: Apple on-device, Private Cloud Compute, OCR, Ollama, OpenAI, Anthropic, Jev, MLX…
+      placeholder: .appleOnDevice
+
+  - type: input
+    id: environment
+    attributes:
+      label: Platform and Xcode
+      placeholder: iOS 27.0 on iPhone 17 Pro, Xcode 27.0
+    validations:
+      required: true
