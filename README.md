@@ -418,9 +418,9 @@ The HTTP server binds to `127.0.0.1`.
 ## 🤖 Build with an AI agent
 
 Working on your app with Claude Code or another coding agent? The
-[ModelRelay skill](skills/modelrelay/SKILL.md) teaches it to read the docs of
-the version your app resolves, pick the right steps and keep credentials,
-writes and fallbacks within the SDK's contracts.
+[ModelRelay skill](skills/modelrelay/SKILL.md) teaches it to add the package,
+read the docs of the version your app resolves, pick the right steps and keep
+credentials, writes and fallbacks within the SDK's contracts.
 
 **Claude Code:** install it as a plugin.
 
