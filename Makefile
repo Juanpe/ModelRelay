@@ -1,4 +1,4 @@
-.PHONY: format check-format lint lint-all check-style check-release test-release
+.PHONY: format check-format lint lint-all check-style check-release test-release check-skill test-skill
 
 format:
 	bash Scripts/swift-style.sh format
@@ -20,3 +20,9 @@ check-release:
 
 test-release:
 	bash Scripts/Tests/check-release-tests.sh
+
+check-skill:
+	bash Scripts/check-skill.sh
+
+test-skill:
+	bash Scripts/Tests/check-skill-tests.sh

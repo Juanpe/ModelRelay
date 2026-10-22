@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- A `modelrelay` agent skill and Claude Code plugin marketplace, so coding agents in host apps
+  use the docs of their resolved version and follow the SDK's safety contracts.
+  `make check-skill` keeps its guide links and API names in sync with the package.
+
 ## [0.1.0] - 2026-10-18
 
 First public release.

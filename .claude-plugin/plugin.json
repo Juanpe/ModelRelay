@@ -1,0 +1,12 @@
+{
+  "name": "modelrelay",
+  "description": "Helps AI agents build, wire and test ModelRelay workflows in apps that depend on the Swift package.",
+  "author": {
+    "name": "Juanpe Catalán",
+    "url": "https://github.com/Juanpe"
+  },
+  "homepage": "https://github.com/Juanpe/ModelRelay",
+  "repository": "https://github.com/Juanpe/ModelRelay",
+  "license": "MIT",
+  "keywords": ["swift", "ios", "macos", "llm", "workflows", "anylanguagemodel"]
+}
