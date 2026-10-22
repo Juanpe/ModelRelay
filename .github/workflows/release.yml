@@ -26,6 +26,7 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: bash Scripts/check-release.sh "$RELEASE_VERSION"
       - run: make check-style
+      - run: make check-skill
 
   draft:
     needs: validate

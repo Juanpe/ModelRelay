@@ -14,6 +14,9 @@ belong in the host, not this package.
   test facets in named extensions without changing suite isolation.
 - Keep folders shallow and feature-owned. No catch-all `Common` or `Utils`
   folders, parallel public/internal trees, or extra targets just for organization.
+- `skills/modelrelay/` is the agent skill for host apps, shipped by the plugin in
+  `.claude-plugin/`. Update it with public API or guide anchor changes and run
+  `make check-skill`. Keep contributor rules here, not in the skill.
 
 ## 🧭 Rules
 

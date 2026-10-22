@@ -33,6 +33,7 @@ Let's build something 🙂
   <a href="#use-cases">💡 Use cases</a> ·
   <a href="#advanced">🛠 Advanced</a> ·
   <a href="#guides">📚 Guides</a> ·
+  <a href="#ai-agents">🤖 AI agents</a> ·
   <a href="#runline">📱 Runline app</a> ·
   <a href="#contributing">❤️ Contributing</a>
 </p>
@@ -411,6 +412,45 @@ These commands use real models. Enable local MLX with `--traits MLX`
 before the executable name; model weights may download on first use.
 The HTTP server binds to `127.0.0.1`.
 [Model-free example →](Examples/StandaloneClient)
+
+<a name="ai-agents"></a>
+
+## 🤖 Build with an AI agent
+
+Working on your app with Claude Code or another coding agent? The
+[ModelRelay skill](skills/modelrelay/SKILL.md) teaches it to read the docs of
+the version your app resolves, pick the right steps and keep credentials,
+writes and fallbacks within the SDK's contracts.
+
+**Claude Code:** install it as a plugin.
+
+```sh
+claude plugin marketplace add Juanpe/ModelRelay
+claude plugin install modelrelay@modelrelay
+```
+
+Inside a session, `/plugin marketplace add Juanpe/ModelRelay` works too.
+
+**Codex:** add the repository as a plugin marketplace, then install
+ModelRelay from the Plugins Directory.
+
+```sh
+codex plugin marketplace add Juanpe/ModelRelay
+```
+
+**Prefer plain files?** Copy [`skills/modelrelay`](skills/modelrelay) where
+your agent looks for skills, then restart it if the skill does not appear:
+
+| Agent | One app | All your projects |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` |
+| Codex | `.agents/skills/` | `~/.agents/skills/` |
+
+App folders live at the root of your app's repository. Other agents that
+read `SKILL.md` skills can use the same folder.
+
+> 💡 The skill is for apps that depend on ModelRelay. Contributors to this
+> repository follow [AGENTS.md](AGENTS.md) instead.
 
 <a name="runline"></a>
 

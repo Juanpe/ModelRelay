@@ -1,0 +1,18 @@
+{
+  "name": "modelrelay",
+  "owner": {
+    "name": "Juanpe Catalán",
+    "url": "https://github.com/Juanpe"
+  },
+  "metadata": {
+    "description": "Agent skills for apps built with ModelRelay."
+  },
+  "plugins": [
+    {
+      "name": "modelrelay",
+      "source": "./",
+      "description": "Helps AI agents build, wire and test ModelRelay workflows in apps that depend on the Swift package.",
+      "category": "development"
+    }
+  ]
+}
