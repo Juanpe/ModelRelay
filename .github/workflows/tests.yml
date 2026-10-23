@@ -42,3 +42,43 @@ jobs:
         run: env -u RELAY_LIVE swift test -Xswiftc -warnings-as-errors
       - name: Run the model-free example
         run: swift run --package-path Examples/StandaloneClient StandaloneClient
+
+  platforms:
+    # swift test only builds for macOS; keep iOS 18 and visionOS 2 availability honest.
+    name: build (${{ matrix.platform }})
+    runs-on: xcode-27
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iOS, visionOS]
+    env:
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+      - name: Build the libraries
+        run: |
+          set -o pipefail
+          for scheme in ModelRelay ModelRelayHTTP ModelRelayCloud ModelRelayMCP; do
+            xcodebuild build -quiet -scheme "$scheme" -destination "generic/platform=$PLATFORM" \
+              -derivedDataPath .build/xcode -skipMacroValidation 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          done
+      # A global warnings-as-errors flag conflicts with dependencies that suppress
+      # warnings, so only the package's own sources are checked.
+      - name: Reject warnings in package sources
+        run: |
+          if grep -E "/Sources/ModelRelay[A-Za-z]*/.*: warning:" "$RUNNER_TEMP/build.log"; then
+            exit 1
+          fi
+
+  mlx:
+    # Compile-only: MLX inference needs supported hardware and model weights.
+    name: build (MLX trait)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+      - name: Install the Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Build ModelRelayMLX
+        run: swift build --traits MLX --target ModelRelayMLX -Xswiftc -warnings-as-errors
