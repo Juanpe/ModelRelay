@@ -11,6 +11,7 @@
   `make check-skill` keeps its guide links and API names in sync with the package.
 - `Field.Kind.object` groups fields, so `extract` steps and tool parameters can ask for
   lists of records such as `.list(.object([...]))`. Each object reads as a dictionary.
+  Exhaustive `switch`es over `Field.Kind` need a case for it.
 
 ### Fixed
 
