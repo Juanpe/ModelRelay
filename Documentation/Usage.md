@@ -171,6 +171,38 @@ prevents fallback. This is not an exactly-once guarantee.
 Group reusable tools in a `ToolKit`, pass it to the executor and select it
 with `kits: ["weather"]`.
 
+<a name="host-tools"></a>
+
+### 🧩 Give an agent a Swift tool
+
+When the action belongs to your app, such as editing an order on screen, write
+the tool in Swift and pass it in a `HostToolKit`:
+
+```swift
+let order = HostToolKit(id: "order", name: "Order", tools: [
+    HostTool(name: "addLine", description: "Adds a product to the order.", parameters: [
+        Field("product", .text),
+        Field("quantity", .number),
+    ]) { arguments in
+        await cart.add(arguments) // Your app's own state
+        return .text("Added")
+    },
+])
+let workflow = Workflow(
+    name: "Order by voice"
+) {
+    Step.agent("answer", "Update the order.", kits: ["order"], model: .appleOnDevice)
+}
+let report = try await WorkflowExecutor(writePolicy: .allow, hostToolKits: [order])
+    .run(workflow, input: .text("Two beers, please"))
+```
+
+The workflow only names the kit, so it stays Codable; the body stays in
+memory. Tools change something unless you pass `changesSomething: false`, and
+then follow the write policy like requests (`.ask` sees a `POST host:order`).
+Local-only executions may call them, since they reach no network. Use a Tool
+steps call them directly with `Step.useTool("add", kit: "order", tool: "addLine")`.
+
 <a name="cloud-models"></a>
 
 ## ☁️ Choose your models

@@ -50,12 +50,16 @@ extension WorkflowExecutor {
         var servers: [ConnectedToolKit] = []
 
         for id in scope.policy.tools == .denied ? [] : kitIDs ?? [] {
+            if let host = hostToolKits[id] {
+                servers.append(ConnectedToolKit(kit: host.toolKit, connection: host.connection, tools: host.tools.map(\.serverTool), reachesNetwork: false))
+                continue
+            }
             guard let kit = toolKits[id] else {
                 throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(id)” isn't available")
             }
             if kit.server != nil {
                 let connection: any ToolServerConnection = try await connect(kit, step: step.name, policy: scope.policy)
-                servers.append(ConnectedToolKit(kit: kit, connection: connection, tools: try await serverTools(kit, connection, step: step.name)))
+                servers.append(ConnectedToolKit(kit: kit, connection: connection, tools: try await serverTools(kit, connection, step: step.name), reachesNetwork: true))
             } else {
                 specs += kit.tools
             }
@@ -69,6 +73,7 @@ private struct ConnectedToolKit: Sendable {
     let kit: ToolKit
     let connection: any ToolServerConnection
     let tools: [ServerTool]
+    let reachesNetwork: Bool
 }
 
 private struct AgentToolDefinitions: Sendable {
@@ -89,6 +94,7 @@ private struct AgentToolDefinitions: Sendable {
                 tool: $0,
                 kit: server.kit,
                 connection: server.connection,
+                reachesNetwork: server.reachesNetwork,
                 step: execution.step.name,
                 context: execution.context,
                 log: log

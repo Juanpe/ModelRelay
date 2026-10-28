@@ -131,6 +131,7 @@ Build one `WorkflowExecutor` per configuration, with explicit dependencies:
 | `secrets:` | The app's `SecretProvider`, backed by secure storage |
 | `writePolicy:` | `.deny` (default), `.ask { request in … }` or `.allow` |
 | `toolKits:` / `toolServers:` | `ToolKit`s and an `MCPConnector` |
+| `hostToolKits:` | `HostToolKit`s: tools the app writes in Swift |
 | `policy:` / `limits:` | `.localOnly`, `.readOnly`, `.noTools`; `WorkflowExecutionLimits` |
 
 - `run` returns the report. `execute` adds live `updates`; keep the handle

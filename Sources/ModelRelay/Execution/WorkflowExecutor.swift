@@ -6,6 +6,7 @@ public actor WorkflowExecutor {
     let stepTimeout: Duration
     let context: RequestContext
     let toolKits: [String: ToolKit]
+    let hostToolKits: [String: HostToolKit]
     let toolServers: (any ToolServerConnector)?
     let policy: WorkflowExecutionPolicy
     let limits: WorkflowExecutionLimits
@@ -17,7 +18,8 @@ public actor WorkflowExecutor {
     /// fallback model, if any). Request steps need `requests`; those that change
     /// something also need a `writePolicy` that allows them. Custom bodies
     /// use the same cooperative timeout and run once, without fallback.
-    /// Tool sets with a server need `toolServers`.
+    /// Tool sets with a server need `toolServers`; `hostToolKits` are tool sets
+    /// the app implements in Swift.
     public init(
         catalog: ModelCatalog = ModelCatalog(),
         stepTimeout: Duration = .seconds(30),
@@ -26,6 +28,7 @@ public actor WorkflowExecutor {
         writePolicy: WritePolicy = .deny,
         toolKits: [ToolKit] = [],
         toolServers: (any ToolServerConnector)? = nil,
+        hostToolKits: [HostToolKit] = [],
         policy: WorkflowExecutionPolicy = .unrestricted,
         limits: WorkflowExecutionLimits = .unlimited
     ) {
@@ -35,6 +38,7 @@ public actor WorkflowExecutor {
         self.stepTimeout = stepTimeout
         self.toolServers = toolServers
         self.toolKits = Dictionary(toolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        self.hostToolKits = Dictionary(hostToolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.modelRuntime = WorkflowModelRuntime(catalog: catalog, stepTimeout: stepTimeout)
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
@@ -91,7 +95,7 @@ public actor WorkflowExecutor {
 
     /// Does not load providers, retrieve credentials, or discover remote tools.
     public func validate(_ workflow: Workflow) -> [WorkflowValidationIssue] {
-        workflow.validationIssues(catalog: catalog, kits: toolKits)
+        workflow.validationIssues(catalog: catalog, kits: toolKits, hostKits: hostToolKits)
     }
 
     func preflight(_ workflow: Workflow) throws {

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import ModelRelay
 
@@ -43,6 +44,30 @@ struct LiveAppleTests {
         print("LIVE decide:", report.output.textValue.replacingOccurrences(of: "\n", with: " | "), "|", report.duration)
         #expect(report.output["damaged"] == .bool(true))
         #expect(report.output["queue"] == .text("shipping"))
+    }
+
+    @Test func onDeviceModelCallsAHostTool() async throws {
+        let added: Mutex<[[String: Value]]> = .init([])
+        let kit: HostToolKit = .init(id: "order", name: "Order", tools: [
+            HostTool(name: "addLine", description: "Adds a product to the order.", parameters: [
+                Field("product", .choice(["Beer", "Cola", "Fries"])),
+                Field("quantity", .number),
+            ]) { arguments in
+                added.withLock { $0.append(arguments) }
+                return .text("Added")
+            },
+        ])
+        let workflow: Workflow = .init(name: "Order", steps: [
+            Step(
+                "answer",
+                .agent(instruction: "Update the order with addLine, then say what you added.", tools: [], kits: ["order"]),
+                model: .appleOnDevice
+            ),
+        ])
+        let executor: WorkflowExecutor = .init(writePolicy: .allow, hostToolKits: [kit])
+        let report: WorkflowExecutionReport = try await executor.run(workflow, input: .text("Two beers, please."))
+        print("LIVE host tool:", report.output.textValue, "| calls:", added.withLock { $0 }, "|", report.duration)
+        #expect(added.withLock { $0 }.contains(["product": .text("Beer"), "quantity": .number(2)]))
     }
 
     @Test func onDeviceModelExtractsListsOfObjects() async throws {

@@ -2,11 +2,13 @@ import AnyLanguageModel
 import Foundation
 
 /// A server tool as an AnyLanguageModel `Tool`. Calls that may change
-/// something ask the write policy first, like write requests.
+/// something ask the write policy first, like write requests. Host tool kits
+/// use it too, as servers that don't reach the network.
 struct ServerToolCall: Tool {
     let tool: ServerTool
     let kit: ToolKit
     let connection: any ToolServerConnection
+    let reachesNetwork: Bool
     let step: String
     let context: RequestContext
     let log: ToolCallLog
@@ -26,7 +28,7 @@ struct ServerToolCall: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         try Task.checkCancellation()
         try log.record(tool.name)
-        try context.policy.checkNetwork(step: step)
+        if reachesNetwork { try context.policy.checkNetwork(step: step) }
         try context.policy.checkTool(changesSomething: tool.changesSomething, step: step)
         var values: [String: Value] = [:]
         if case let .dictionary(fields) = Value(arguments) { values = fields }
@@ -58,7 +60,8 @@ enum ServerCallDescription {
         )
         return PreparedRequest(
             method: .post,
-            url: URL(string: kit.server?.url ?? "") ?? URL(string: "about:blank")!,
+            // Host tool kits have no server: their calls read as `host:<kit id>`.
+            url: URL(string: kit.server?.url ?? "host:\(kit.id)") ?? URL(string: "about:blank")!,
             headers: [],
             body: body,
             secrets: []

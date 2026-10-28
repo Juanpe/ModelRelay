@@ -7,25 +7,21 @@ extension WorkflowExecutor {
         let trace: StepTrace = execution.trace
         guard case let .useTool(kitID, toolName, arguments) = step.kind else { throw InvalidOutput(reason: "Expected a tool step") }
 
-        guard let kit = toolKits[kitID] else {
-            throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
-        }
         let rendered = arguments.mapValues { Template.render($0, scope.resolve) }
         let value: Value
-        if kit.server != nil {
+        if let host = hostToolKits[kitID] {
+            let tools: [ServerTool] = host.tools.map(\.serverTool)
+            let call: ConnectedToolCall = .init(kit: host.toolKit, connection: host.connection, tools: tools, name: toolName, arguments: rendered)
+            value = try await runConnectedTool(call, execution: execution, scope: scope)
+        } else if let kit = toolKits[kitID], kit.server != nil {
             let connection = try await connect(kit, step: step.name, policy: scope.policy)
-            guard let tool = try await serverTools(kit, connection, step: step.name).first(where: { $0.name == toolName }) else {
-                throw RelayError.stepFailed(step: step.name, reason: "\(kit.name) has no tool “\(toolName)”")
-            }
-            let typed = ServerArguments.typed(rendered, for: tool)
-            let call = ServerCallDescription.prepared(kit: kit, tool: tool.name, arguments: typed)
-            trace.input = call.description
-            try scope.policy.checkTool(changesSomething: tool.changesSomething, step: step.name)
-            try scope.control.beginTool(tool.name, step: step.name)
-
-            let invocation: ServerToolInvocation = .init(tool: tool, connection: connection, arguments: typed, request: call)
-            value = try await callServerTool(invocation, execution: execution, control: scope.control)
+            let tools: [ServerTool] = try await serverTools(kit, connection, step: step.name)
+            let call: ConnectedToolCall = .init(kit: kit, connection: connection, tools: tools, name: toolName, arguments: rendered)
+            value = try await runConnectedTool(call, execution: execution, scope: scope)
         } else {
+            guard let kit = toolKits[kitID] else {
+                throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
+            }
             guard let spec = kit.tools.first(where: { $0.name == toolName }) else {
                 throw RelayError.stepFailed(step: step.name, reason: "\(kit.name) has no tool “\(toolName)”")
             }
@@ -36,6 +32,21 @@ extension WorkflowExecutor {
         }
         scope.record(execution.record(value))
         return value
+    }
+
+    private func runConnectedTool(_ call: ConnectedToolCall, execution: WorkflowStepExecution, scope: WorkflowExecutionScope) async throws -> Value {
+        let step: String = execution.step.name
+        guard let tool = call.tools.first(where: { $0.name == call.name }) else {
+            throw RelayError.stepFailed(step: step, reason: "\(call.kit.name) has no tool “\(call.name)”")
+        }
+        let typed: [String: Value] = ServerArguments.typed(call.arguments, for: tool)
+        let request: PreparedRequest = ServerCallDescription.prepared(kit: call.kit, tool: tool.name, arguments: typed)
+        execution.trace.input = request.description
+        try scope.policy.checkTool(changesSomething: tool.changesSomething, step: step)
+        try scope.control.beginTool(tool.name, step: step)
+
+        let invocation: ServerToolInvocation = .init(tool: tool, connection: call.connection, arguments: typed, request: request)
+        return try await callServerTool(invocation, execution: execution, control: scope.control)
     }
 
     private func callServerTool(_ invocation: ServerToolInvocation, execution: WorkflowStepExecution, control: ExecutionControl) async throws -> Value {
@@ -84,6 +95,15 @@ extension WorkflowExecutor {
             throw operationFailure(step: step, error: error)
         }
     }
+}
+
+/// One named tool of a set whose tools come from a connection: a server, or the host app.
+private struct ConnectedToolCall: Sendable {
+    let kit: ToolKit
+    let connection: any ToolServerConnection
+    let tools: [ServerTool]
+    let name: String
+    let arguments: [String: String]
 }
 
 private struct ServerToolInvocation: Sendable {
