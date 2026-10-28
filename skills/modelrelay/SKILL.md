@@ -38,7 +38,7 @@ git ls-remote --tags --refs https://github.com/Juanpe/ModelRelay.git | sed 's|.*
 
 ```swift
 // Dependencies: up to the next minor while ModelRelay is pre-1.0.
-.package(url: "https://github.com/Juanpe/ModelRelay.git", "0.1.0" ..< "0.2.0", traits: []),
+.package(url: "https://github.com/Juanpe/ModelRelay.git", "0.2.0" ..< "0.3.0", traits: []),
 
 // Target dependencies: only the products you use.
 .product(name: "ModelRelay", package: "ModelRelay"),

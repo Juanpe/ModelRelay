@@ -27,7 +27,7 @@ Never move a published tag. Fix a release with a new version.
 ## 📦 Install a release
 
 Once `0.1.0` is tagged, use the version range in the
-[installation example](../README.md#installation). It stays within `0.1.x`.
+[installation example](../README.md#installation). It stays within `0.2.x`.
 Opt into a new minor line deliberately while the API is pre-1.0.
 `branch: "main"` is only for unreleased development work.
 

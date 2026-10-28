@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-28
+
 ### Added
 
 - A `modelrelay` agent skill and Claude Code plugin marketplace, so coding agents in host apps
@@ -37,5 +39,6 @@ First public release.
   inject a test transport. Equality and hashing include that session's identity.
 - Support for iOS 18, macOS 15 and visionOS 2, with newer Apple features availability-gated.
 
-[Unreleased]: https://github.com/Juanpe/ModelRelay/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/Juanpe/ModelRelay/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/Juanpe/ModelRelay/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/Juanpe/ModelRelay/releases/tag/0.1.0

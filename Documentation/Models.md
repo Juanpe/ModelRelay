@@ -22,7 +22,7 @@ let package = Package(
     name: "MyClient",
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     dependencies: [
-        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.1.0" ..< "0.2.0", traits: []),
+        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.2.0" ..< "0.3.0", traits: []),
         .package(url: "https://github.com/huggingface/AnyLanguageModel", exact: "1.0.0", traits: []),
     ],
     targets: [

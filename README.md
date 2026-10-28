@@ -117,7 +117,7 @@ let package = Package(
     name: "MyClient",
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     dependencies: [
-        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.1.0" ..< "0.2.0", traits: []),
+        .package(url: "https://github.com/Juanpe/ModelRelay.git", "0.2.0" ..< "0.3.0", traits: []),
     ],
     targets: [
         .target(name: "MyClient", dependencies: [
@@ -129,7 +129,7 @@ let package = Package(
 
 Releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 During `0.x`, patch updates stay compatible; breaking changes require a new
-minor version. The range above accepts `0.1.x`, not `0.2.0`.
+minor version. The range above accepts `0.2.x`, not `0.3.0`.
 [Changelog →](CHANGELOG.md) · [Version policy and publishing →](Documentation/Releasing.md)
 
 <details>
