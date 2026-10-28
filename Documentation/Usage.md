@@ -6,8 +6,8 @@ Pick a recipe and add the integrations it needs. Models used by a step must
 be available in your executor's catalog.
 
 [🎯 Steps](#step-types) · [🔀 Branches](#composition) · [📦 Values](#values-and-input) ·
-[🌐 HTTP](#http-requests-and-agent-tools) · [☁️ Cloud](#cloud-models) · [📷 Images](#images) ·
-[👨‍💻 Swift](#custom-swift) · [🧰 MCP](#mcp-tools-and-oauth) · [🗳 Decisions](#decision-models)
+[🧾 Nested fields](#nested-fields) · [🌐 HTTP](#http-requests-and-agent-tools) · [☁️ Cloud](#cloud-models) ·
+[📷 Images](#images) · [👨‍💻 Swift](#custom-swift) · [🧰 MCP](#mcp-tools-and-oauth) · [🗳 Decisions](#decision-models)
 
 <a name="step-types"></a>
 
@@ -86,6 +86,30 @@ silently substituting another value.
 Executions are independent. Opt into [conversation/handoff](ContextAndPolicies.md)
 for shared history or selected context. `stepTimeout` defaults to 30 seconds
 per bounded operation, not per workflow; cancellation remains cooperative.
+
+<a name="nested-fields"></a>
+
+## 🧾 Extract lists of objects
+
+Group fields with `.object`. A list of objects reads records such as the lines of an order:
+
+```swift
+let workflow = Workflow(
+    name: "Order from text"
+) {
+    Step.extract("order", instruction: "Turn the order into lines.", model: .appleOnDevice) {
+        Field("lines", .list(.object([
+            Field("product", .choice(["Beer", "Cola", "Fries"])),
+            Field("quantity", .number),
+            Field("note", .text),
+        ])))
+    }
+}
+```
+
+Each object becomes a dictionary (`{{order.lines}}` inserts the list as JSON).
+Objects work wherever fields do, including tool parameters. Nested field names
+only need to be unique within their object.
 
 <a name="http-requests-and-agent-tools"></a>
 

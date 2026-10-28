@@ -119,7 +119,7 @@ private enum ServerArguments {
         case let .list(item):
             if let data = text.data(using: .utf8), let parsed = Value(json: data), case .list = parsed { return parsed }
             return .list(text.split(whereSeparator: \.isNewline).map { value(String($0).trimmingCharacters(in: .whitespaces), as: item) })
-        case .text, .choice:
+        case .text, .choice, .object:
             // A JSON object or list written into a text field is sent as one.
             if text.hasPrefix("{") || text.hasPrefix("["), let data = text.data(using: .utf8), let parsed = Value(json: data) {
                 return parsed

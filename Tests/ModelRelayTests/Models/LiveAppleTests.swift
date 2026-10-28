@@ -45,6 +45,20 @@ struct LiveAppleTests {
         #expect(report.output["queue"] == .text("shipping"))
     }
 
+    @Test func onDeviceModelExtractsListsOfObjects() async throws {
+        let workflow: Workflow = .init(name: "Order", steps: [Step("order", .extract(instruction: "Turn the order into lines.", fields: [
+            Field("lines", .list(.object([
+                Field("product", .choice(["Beer", "Cola", "Fries"])),
+                Field("quantity", .number),
+            ]))),
+        ]), model: .appleOnDevice)])
+        let report: WorkflowExecutionReport = try await WorkflowExecutor().run(workflow, input: .text("Two beers and one portion of fries, please."))
+        print("LIVE order:", report.output["lines"]?.modelText ?? "", "|", report.duration)
+        let lines: [Value] = try #require(report.output["lines"].flatMap { if case let .list(items) = $0 { items } else { nil } })
+        #expect(lines.contains(.dictionary(["product": .text("Beer"), "quantity": .number(2)])))
+        #expect(lines.contains(.dictionary(["product": .text("Fries"), "quantity": .number(1)])))
+    }
+
     /// Its first use in a process prepares the model, which can take a
     /// minute on a Mac; later runs take a fraction of a second.
     @Test func appleTextRecognitionReadsTheImageOnDevice() async throws {
