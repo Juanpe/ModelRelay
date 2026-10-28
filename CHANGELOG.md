@@ -9,6 +9,14 @@
 - A `modelrelay` agent skill and Claude Code plugin marketplace, so coding agents in host apps
   add the package, use the docs of their resolved version and follow the SDK's safety contracts.
   `make check-skill` keeps its guide links and API names in sync with the package.
+- `Field.Kind.object` groups fields, so `extract` steps and tool parameters can ask for
+  lists of records such as `.list(.object([...]))`. Each object reads as a dictionary.
+  Exhaustive `switch`es over `Field.Kind` need a case for it.
+
+### Fixed
+
+- Named schema nodes no longer share a definition when their names repeat (a tool and one of its
+  choice parameters, or fields in different objects), which let one replace the other's shape.
 
 ## [0.1.0] - 2026-10-18
 

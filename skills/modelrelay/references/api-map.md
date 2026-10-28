@@ -10,6 +10,7 @@ Read signatures in `Sources/` before calling anything not shown in a guide.
 | --- | --- | --- |
 | Generated text | `Step.prompt("summary", "Summarize.", model: .appleOnDevice)` | `Documentation/Usage.md#step-types` |
 | Typed fields | `Step.extract("expense", instruction: "…", model:) { Field(…) }` | `README.md#usage` |
+| Lists of records | `Field("lines", .list(.object([Field(…)])))` | `Documentation/Usage.md#nested-fields` |
 | One label | `Step.classify("kind", "…", labels: […], model:)` | `Documentation/Usage.md#composition` |
 | Yes/no, choices, scores | `Step.decide("ticket", questions: [Question(…)], model:)` | `Documentation/Usage.md#decision-models` |
 | An answer that may call tools | `Step.agent("answer", "…", tools: [AgentTool(…)], model:)` | `Documentation/Usage.md#http-requests-and-agent-tools` |

@@ -29,22 +29,9 @@ extension Workflow {
         }
         var names: Set<String> = []
         let knownModels = Set(catalog.ids)
-        func fields(_ fields: [Field], step: String) {
-            if Set(fields.map(\.name)).count != fields.count || fields.contains(where: { $0.name.isEmpty }) {
-                issue(step, .invalidSchema, "fields need unique nonempty names")
-            }
-            func kind(_ value: Field.Kind) {
-                switch value {
-                case let .choice(options):
-                    if options.isEmpty || options.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) || Set(options).count != options.count {
-                        issue(step, .invalidSchema, "choices must be nonempty and unique")
-                    }
-                case let .list(item): kind(item)
-                default: break
-                }
-            }
-            for field in fields {
-                kind(field.kind)
+        func fields(_ list: [Field], step: String) {
+            for problem in list.schemaProblems {
+                issue(step, .invalidSchema, problem)
             }
         }
         func visit(_ steps: [Step]) {

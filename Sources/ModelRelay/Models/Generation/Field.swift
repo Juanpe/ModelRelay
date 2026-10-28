@@ -6,6 +6,9 @@ public struct Field: Codable, Sendable, Hashable {
         case text, number, bool
         case choice([String])
         indirect case list(Kind)
+        /// Named fields of their own, such as each line of an order in a
+        /// `.list(.object([...]))`. The result is a dictionary.
+        case object([Field])
     }
 
     public var name: String
