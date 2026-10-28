@@ -18,7 +18,7 @@ public struct WorkflowValidationError: Error, Equatable, Sendable {
 }
 
 extension Workflow {
-    func validationIssues(catalog: ModelCatalog, kits: [String: ToolKit]) -> [WorkflowValidationIssue] {
+    func validationIssues(catalog: ModelCatalog, tools: ToolSources) -> [WorkflowValidationIssue] {
         var issues: [WorkflowValidationIssue] = []
         func issue(_ step: String, _ kind: WorkflowValidationIssue.Kind, _ detail: String) {
             issues.append(.init(step: step, kind: kind, detail: detail))
@@ -63,7 +63,7 @@ extension Workflow {
                         issue(step.name, .incompatibleModel, "no configured model supports this step")
                     }
                 }
-                var tools: [AgentTool] = []
+                issues += toolIssues(for: step, sources: tools)
                 switch step.kind {
                 case let .extract(_, values): fields(values, step: step.name)
                 case let .classify(_, labels):
@@ -72,19 +72,6 @@ extension Workflow {
                     }
                 case let .decide(questions):
                     if let problem = Question.problem(in: questions) { issue(step.name, .invalidSchema, problem) }
-                case let .agent(_, own, ids):
-                    tools = own
-                    for id in ids ?? [] {
-                        if let kit = kits[id] { if kit.server == nil { tools += kit.tools } }
-                        else { issue(step.name, .unavailableTool, id) }
-                    }
-                case let .useTool(id, name, _):
-                    if let kit = kits[id] {
-                        if kit.server == nil {
-                            if let tool = kit.tools.first(where: { $0.name == name }) { tools = [tool] }
-                            else { issue(step.name, .unavailableTool, name) }
-                        }
-                    } else { issue(step.name, .unavailableTool, id) }
                 case let .parallel(children): visit(children)
                 case let .ifEquals(_, _, yes, no): visit(yes); visit(no)
                 case let .switchOn(_, cases, otherwise):
@@ -94,19 +81,6 @@ extension Workflow {
                         visit(item.steps)
                     }; visit(otherwise)
                 default: break
-                }
-                if Set(tools.map(\.name)).count != tools.count { issue(step.name, .invalidSchema, "tool names must be unique") }
-                for tool in tools {
-                    fields(tool.parameters, step: step.name)
-                }
-                // Local kit templates can read workflow values too. No discovery/network here.
-                for tool in tools {
-                    let available = Set(availableSteps(before: step.name).map(\.name) + ["input"])
-                    let texts = [tool.request.url, tool.request.body ?? ""] + tool.request.headers.map(\.value)
-                    for ref in texts.flatMap({ Template.references(in: $0) }) where !ref.hasPrefix("secret.") && !ref.hasPrefix("args.") {
-                        let base = ref.split(separator: ".").first.map(String.init) ?? ""
-                        if !available.contains(base) { issue(step.name, .unavailableReference, ref) }
-                    }
                 }
             }
         }

@@ -12,6 +12,10 @@
 - `Field.Kind.object` groups fields, so `extract` steps and tool parameters can ask for
   lists of records such as `.list(.object([...]))`. Each object reads as a dictionary.
   Exhaustive `switch`es over `Field.Kind` need a case for it.
+- Host tools: `HostTool`s in a `HostToolKit`, passed as `WorkflowExecutor(hostToolKits:)`, are
+  tools the app writes in Swift, such as one that edits the app's own state. Agent and Use a Tool
+  steps select them by kit id, so workflows stay Codable. Calls that change something follow the
+  write policy; local-only executions may call them.
 
 ### Fixed
 

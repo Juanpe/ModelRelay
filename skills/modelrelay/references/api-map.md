@@ -58,6 +58,7 @@ Package setup for each product: `Documentation/Models.md#setup` and
 | Credentials | `SecretProvider` with `{{secret.NAME}}` | `Documentation/Usage.md#http-requests-and-agent-tools` |
 | Write decisions | `WritePolicy` | `Documentation/ContextAndPolicies.md#execution-policies` |
 | Reusable tools | `ToolKit`, `AgentTool`, `ToolServer` | `Documentation/Usage.md#http-requests-and-agent-tools` |
+| Tools written in Swift | `HostToolKit`, `HostTool` | `Documentation/Usage.md#host-tools` |
 | MCP access | `MCPConnector`, `MCPSignIn` | `Documentation/Integration.md#mcp-and-oauth` |
 | Durable review state | `WorkflowExecutionCheckpointStore` | `Documentation/Recovery.md#storage-contract-atomic-durable-compare-and-swap` |
 
