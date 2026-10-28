@@ -8,7 +8,7 @@ extension WorkflowExecutor {
         try workflow.validateContexts()
         try workflow.validateApprovals(recoverable: true)
         try preflight(workflow)
-        return try workflow.recoveryDefinition(kits: Array(toolKits.values))
+        return try workflow.recoveryDefinition(kits: toolSources.declaredKits)
     }
 
     func validate(_ checkpoint: WorkflowExecutionCheckpoint, workflow: Workflow, revision: String) throws {

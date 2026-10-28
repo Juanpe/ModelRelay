@@ -18,7 +18,7 @@ public struct WorkflowValidationError: Error, Equatable, Sendable {
 }
 
 extension Workflow {
-    func validationIssues(catalog: ModelCatalog, kits: [String: ToolKit], hostKits: [String: HostToolKit]) -> [WorkflowValidationIssue] {
+    func validationIssues(catalog: ModelCatalog, tools: ToolSources) -> [WorkflowValidationIssue] {
         var issues: [WorkflowValidationIssue] = []
         func issue(_ step: String, _ kind: WorkflowValidationIssue.Kind, _ detail: String) {
             issues.append(.init(step: step, kind: kind, detail: detail))
@@ -63,7 +63,7 @@ extension Workflow {
                         issue(step.name, .incompatibleModel, "no configured model supports this step")
                     }
                 }
-                issues += toolIssues(for: step, kits: kits, hostKits: hostKits)
+                issues += toolIssues(for: step, sources: tools)
                 switch step.kind {
                 case let .extract(_, values): fields(values, step: step.name)
                 case let .classify(_, labels):

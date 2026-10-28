@@ -137,4 +137,14 @@ private final class Approvals: Sendable {
             .init(step: "pick", kind: .invalidSchema, detail: "choices must be nonempty and unique"),
         ])
     }
+
+    @Test func hostToolKitsLeaveRecoveryDefinitionsAsTheyWere() async throws {
+        let kits: [ToolKit] = [ToolKit(id: "api", name: "API", tools: [])]
+        let workflow: Workflow = .init(name: "Order", steps: [Step("note", .template("{{input}}"))])
+
+        let without: String = try await WorkflowExecutor(toolKits: kits).recoveryDefinition(workflow, revision: "1")
+        let with: String = try await WorkflowExecutor(toolKits: kits, hostToolKits: [Order().kit()]).recoveryDefinition(workflow, revision: "1")
+
+        #expect(with == without)
+    }
 }

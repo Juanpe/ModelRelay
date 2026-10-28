@@ -5,8 +5,7 @@ public actor WorkflowExecutor {
     let catalog: ModelCatalog
     let stepTimeout: Duration
     let context: RequestContext
-    let toolKits: [String: ToolKit]
-    let hostToolKits: [String: HostToolKit]
+    let toolSources: ToolSources
     let toolServers: (any ToolServerConnector)?
     let policy: WorkflowExecutionPolicy
     let limits: WorkflowExecutionLimits
@@ -37,8 +36,7 @@ public actor WorkflowExecutor {
         self.limits = limits
         self.stepTimeout = stepTimeout
         self.toolServers = toolServers
-        self.toolKits = Dictionary(toolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        self.hostToolKits = Dictionary(hostToolKits.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        self.toolSources = ToolSources(kits: toolKits, hostKits: hostToolKits)
         self.modelRuntime = WorkflowModelRuntime(catalog: catalog, stepTimeout: stepTimeout)
         self.context = RequestContext(requests: requests, secrets: secrets, writePolicy: writePolicy, timeout: stepTimeout)
     }
@@ -95,7 +93,7 @@ public actor WorkflowExecutor {
 
     /// Does not load providers, retrieve credentials, or discover remote tools.
     public func validate(_ workflow: Workflow) -> [WorkflowValidationIssue] {
-        workflow.validationIssues(catalog: catalog, kits: toolKits, hostKits: hostToolKits)
+        workflow.validationIssues(catalog: catalog, tools: toolSources)
     }
 
     func preflight(_ workflow: Workflow) throws {

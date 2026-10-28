@@ -3,8 +3,8 @@ import Foundation
 extension Workflow {
     /// Preflight issues with the tools an agent or Use a Tool step selects.
     /// Server tools are discovered when the step runs, so they aren't checked here.
-    func toolIssues(for step: Step, kits: [String: ToolKit], hostKits: [String: HostToolKit]) -> [WorkflowValidationIssue] {
-        let selection: ToolSelection = .init(step: step, kits: kits, hostKits: hostKits)
+    func toolIssues(for step: Step, sources: ToolSources) -> [WorkflowValidationIssue] {
+        let selection: ToolSelection = .init(step: step, sources: sources)
         var issues: [WorkflowValidationIssue] = selection.unavailable.map { .init(step: step.name, kind: .unavailableTool, detail: $0) }
 
         let names: [String] = selection.requests.map(\.name) + selection.hosts.map(\.name)
@@ -34,26 +34,27 @@ private struct ToolSelection {
     /// Why a selected kit or tool isn't available.
     var unavailable: [String] = []
 
-    init(step: Step, kits: [String: ToolKit], hostKits: [String: HostToolKit]) {
+    init(step: Step, sources: ToolSources) {
         switch step.kind {
         case let .agent(_, own, ids):
             requests = own
             for id in ids ?? [] {
-                add(kits[id], hostKits[id], id: id, tool: nil)
+                add(sources[id], id: id, tool: nil)
             }
         case let .useTool(id, name, _):
-            add(kits[id], hostKits[id], id: id, tool: name)
+            add(sources[id], id: id, tool: name)
         default:
             break
         }
     }
 
-    private mutating func add(_ kit: ToolKit?, _ host: HostToolKit?, id: String, tool name: String?) {
-        switch (kit, host) {
-        case (.some, .some): unavailable.append("\(id) names both a tool kit and a host tool kit")
-        case let (nil, host?): hosts += pick(host.tools, name: name) { $0.name }
-        case let (kit?, nil): if kit.server == nil { requests += pick(kit.tools, name: name) { $0.name } }
-        case (nil, nil): unavailable.append(id)
+    private mutating func add(_ source: ToolSource?, id: String, tool name: String?) {
+        switch source {
+        case let .requests(kit): requests += pick(kit.tools, name: name) { $0.name }
+        case .server: break
+        case let .host(host): hosts += pick(host.tools, name: name) { $0.name }
+        case .ambiguous: unavailable.append("\(id) names both a tool kit and a host tool kit")
+        case nil: unavailable.append(id)
         }
     }
 

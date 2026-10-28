@@ -15,15 +15,16 @@ extension WorkflowExecutor {
             for value in scope.valuePolicies.values {
                 policy.data = policy.data.combined(with: value)
             }
+        // Only request tools read workflow values through templates.
         case let .agent(_, _, kits):
-            for id in kits ?? [] {
-                for tool in toolKits[id]?.tools ?? [] {
+            for case let .requests(kit)? in (kits ?? []).map({ toolSources[$0] }) {
+                for tool in kit.tools {
                     references += ([tool.request.url, tool.request.body ?? ""] + tool.request.headers.map(\.value))
                         .flatMap { Template.references(in: $0) }
                 }
             }
         case let .useTool(kitID, toolName, _):
-            if let tool = toolKits[kitID]?.tools.first(where: { $0.name == toolName }) {
+            if case let .requests(kit)? = toolSources[kitID], let tool = kit.tools.first(where: { $0.name == toolName }) {
                 references += ([tool.request.url, tool.request.body ?? ""] + tool.request.headers.map(\.value))
                     .flatMap { Template.references(in: $0) }
             }

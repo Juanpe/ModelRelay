@@ -9,19 +9,17 @@ extension WorkflowExecutor {
 
         let rendered = arguments.mapValues { Template.render($0, scope.resolve) }
         let value: Value
-        if let host = hostToolKits[kitID] {
+        switch toolSources[kitID] {
+        case let .host(host):
             let tools: [ServerTool] = host.tools.map(\.serverTool)
             let call: ConnectedToolCall = .init(kit: host.toolKit, connection: host.connection, tools: tools, name: toolName, arguments: rendered)
             value = try await runConnectedTool(call, execution: execution, scope: scope)
-        } else if let kit = toolKits[kitID], kit.server != nil {
+        case let .server(kit):
             let connection = try await connect(kit, step: step.name, policy: scope.policy)
             let tools: [ServerTool] = try await serverTools(kit, connection, step: step.name)
             let call: ConnectedToolCall = .init(kit: kit, connection: connection, tools: tools, name: toolName, arguments: rendered)
             value = try await runConnectedTool(call, execution: execution, scope: scope)
-        } else {
-            guard let kit = toolKits[kitID] else {
-                throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
-            }
+        case let .requests(kit):
             guard let spec = kit.tools.first(where: { $0.name == toolName }) else {
                 throw RelayError.stepFailed(step: step.name, reason: "\(kit.name) has no tool “\(toolName)”")
             }
@@ -29,6 +27,8 @@ extension WorkflowExecutor {
                 if reference.hasPrefix("args.") { return rendered[String(reference.dropFirst("args.".count))].map(Value.text) }
                 return scope.resolve(reference)
             }
+        case .ambiguous, nil:
+            throw RelayError.stepFailed(step: step.name, reason: "the tool set “\(kitID)” isn't available")
         }
         scope.record(execution.record(value))
         return value
